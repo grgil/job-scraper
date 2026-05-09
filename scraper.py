@@ -211,7 +211,7 @@ async def _get_next_page_links(search_page) -> list[dict]:
     }""")
 
 
-async def scrape_site(browser, site: dict, since_date: date) -> list[dict]:
+async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict], int]:
     _log(f"Scraping {site['name']} ...")
     # Two pages: search_page stays on the results list for pagination;
     # detail_page loads each job so we never navigate search_page away.
@@ -223,6 +223,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> list[dict]:
         _log(f"  {len(links)} job(s) on page {page_num}")
 
         results = []
+        skipped = 0
         consecutive_empty = 0
 
         while links:
@@ -233,6 +234,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> list[dict]:
 
                 if details is None:
                     _log("    No JSON-LD — skipping")
+                    skipped += 1
                     continue
 
                 dp = details["date_posted"]
@@ -258,13 +260,13 @@ async def scrape_site(browser, site: dict, since_date: date) -> list[dict]:
         else:
             _log("  No more pages")
 
-        return results
+        return results, skipped
     finally:
         await search_page.close()
         await detail_page.close()
 
 
-def _build_site_section(site_name: str, jobs: list[dict]) -> str:
+def _build_site_section(site_name: str, jobs: list[dict], skipped: int) -> str:
     count = len(jobs)
     job_items_html = []
     for job in jobs:
@@ -286,18 +288,22 @@ def _build_site_section(site_name: str, jobs: list[dict]) -> str:
         if job_items_html else
         '<p style="color:#aaa;font-size:13px;">No new listings today.</p>'
     )
+    skip_note = (
+        f'<p style="color:#bbb;font-size:12px;margin-top:4px;">{skipped} skipped (no structured data)</p>'
+        if skipped else ""
+    )
     return (
         f'<h3 style="color:#1a4a7a;margin-bottom:4px;">{site_name}</h3>'
         f'<p style="margin-top:0;font-size:13px;color:#555;">{count} new posting{"s" if count != 1 else ""}</p>'
-        f'{body}'
+        f'{body}{skip_note}'
     )
 
 
-def build_html_email(results: list[tuple[str, list[dict]]], today: date) -> str:
-    total = sum(len(jobs) for _, jobs in results)
+def build_html_email(results: list[tuple[str, list[dict], int]], today: date) -> str:
+    total = sum(len(jobs) for _, jobs, _ in results)
     date_str = today.strftime('%b %d, %Y')
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
-        _build_site_section(site_name, jobs) for site_name, jobs in results
+        _build_site_section(site_name, jobs, skipped) for site_name, jobs, skipped in results
     )
     return f"""<!DOCTYPE html>
 <html>
@@ -311,8 +317,8 @@ def build_html_email(results: list[tuple[str, list[dict]]], today: date) -> str:
 </html>"""
 
 
-def send_email(results: list[tuple[str, list[dict]]], today: date) -> None:
-    total = sum(len(jobs) for _, jobs in results)
+def send_email(results: list[tuple[str, list[dict], int]], today: date) -> None:
+    total = sum(len(jobs) for _, jobs, _ in results)
     subject = f"[Job Alert] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
     html = build_html_email(results, today)
 
@@ -348,9 +354,9 @@ async def main() -> None:
             try:
                 results = []
                 for site in SITES:
-                    jobs = await scrape_site(browser, site, TODAY)
-                    _log(f"{site['name']}: {len(jobs)} qualifying job(s)")
-                    results.append((site["name"], jobs))
+                    jobs, skipped = await scrape_site(browser, site, TODAY)
+                    _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped} skipped")
+                    results.append((site["name"], jobs, skipped))
 
                 send_email(results, TODAY)
             finally:
