@@ -1,13 +1,12 @@
 # Health Job Scraper
 
-Scrapes UVA Health and VCU Health careers pages daily and sends email alerts for jobs posted today or yesterday. Uses Playwright (headless Chromium) because both sites are fully JavaScript-rendered.
+Scrapes VCU Health and UVA Health careers pages daily and sends a single email alert for jobs posted today. Uses Playwright (headless Chromium) because both sites are fully JavaScript-rendered. Runs automatically via GitHub Actions.
 
 ---
 
 ## Prerequisites
 
 - Python 3.10 or newer
-- Windows (Task Scheduler integration)
 - A Gmail account with 2FA enabled
 
 ---
@@ -58,44 +57,31 @@ EMAIL_APP_PASS=xxxx xxxx xxxx xxxx
 python scraper.py
 ```
 
-The script prints progress for each site and each job card it checks. If qualifying jobs are found, one email per site is sent immediately.
-
-Expected output when jobs are found:
-
-```
-Scraping UVA Health ...
-  42 job card(s) on list page
-  [1/42] Registered Nurse - ICU
-    MATCH  posted 2025-05-04
-  [2/42] Patient Care Technician
-    Older (2025-05-01) — stopping
-
-  1 qualifying job(s) for UVA Health
-  Email sent to you@gmail.com
-```
+The script prints progress for each site and each job card it checks. One combined email covering both sites is sent at the end regardless of match count.
 
 ---
 
-## Scheduling with Windows Task Scheduler
+## Scheduling with GitHub Actions
 
-Right-click `setup_task.bat` → **Run as administrator**.
+The workflow at `.github/workflows/scraper.yml` runs automatically at 11:59 PM EST every day. No local machine needs to stay on.
 
-The script:
-- Auto-detects your Python executable path
-- Deletes any existing `HealthJobScraper` task first
-- Registers a new daily task at 11:59 PM
+### Required repository secrets
 
-To verify the task was created, open **Task Scheduler** (search in Start) and look for `HealthJobScraper` under Task Scheduler Library.
+Add these under **Settings → Secrets and variables → Actions → New repository secret**:
 
-To trigger it immediately for testing:
-```
-schtasks /run /tn "HealthJobScraper"
-```
+| Secret | Value |
+|---|---|
+| `EMAIL_FROM` | your-gmail@gmail.com |
+| `EMAIL_TO` | where-alerts-go@example.com |
+| `EMAIL_APP_PASS` | the 16-character App Password |
 
-To remove it:
-```
-schtasks /delete /tn "HealthJobScraper" /f
-```
+### Manual trigger
+
+Go to **Actions → Health Job Scraper → Run workflow** to fire it on demand.
+
+### Checking run logs
+
+Click any completed run in the Actions tab to see full scraper output, including which jobs were found and whether the email was sent.
 
 ---
 
@@ -105,7 +91,7 @@ schtasks /delete /tn "HealthJobScraper" /f
 
 - Confirm 2-Step Verification is enabled on the sending Gmail account
 - Regenerate the App Password — they can silently expire or be revoked
-- Paste the full 16-character password including the spaces into `.env`
+- Paste the full 16-character password including the spaces into `.env` (or the repository secret)
 - Do not use your regular Gmail login password
 
 ### No jobs found / zero emails sent
@@ -116,15 +102,8 @@ schtasks /delete /tn "HealthJobScraper" /f
 
 ### JSON-LD block missing on a detail page
 
-You'll see `No JSON-LD block — skipping` in the output. This happens when:
+You'll see `No JSON-LD — skipping` in the output. This happens when:
 - The Phenom People platform didn't embed structured data for that specific posting
 - The page returned an error (404, redirect)
 
 These jobs are skipped automatically. If it happens for every job on a site, the ATS version may have changed — open a job detail page in Chrome DevTools and search the page source for `application/ld+json`.
-
-### Task Scheduler not firing
-
-1. Open Task Scheduler → find `HealthJobScraper` → check **Last Run Result** (should be `0x0` for success)
-2. Check that the task's **Security options** shows **Run only when user is logged on** OR switch to **Run whether user is logged on or not** and enter your Windows password
-3. Check that the working directory issue doesn't apply: `scraper.py` resolves its `.env` path relative to its own location (`Path(__file__).parent`), so it works regardless of what directory Task Scheduler starts in
-4. To see output from the scheduled run, edit the task action to redirect stdout: `python "C:\path\scraper.py" >> "C:\path\scraper.log" 2>&1`
