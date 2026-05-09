@@ -21,16 +21,16 @@ EMAIL_APP_PASS = os.environ.get("EMAIL_APP_PASS", "")
 
 SITES = [
     {
-        "name": "UVA Health",
+        "name": "VCU Health",
         "url": (
-            "https://careers.uvahealth.org/us/en/search-results"
+            "https://careers.vcuhealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
     },
     {
-        "name": "VCU Health",
+        "name": "UVA Health",
         "url": (
-            "https://careers.vcuhealth.org/us/en/search-results"
+            "https://careers.uvahealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
     },
@@ -245,8 +245,8 @@ async def scrape_site(browser, site: dict, since_date: date) -> list[dict]:
 
             if page_matches == 0:
                 consecutive_empty += 1
-                _log(f"  Page {page_num}: 0 matches ({consecutive_empty}/3) — stopping" if consecutive_empty >= 3 else f"  Page {page_num}: 0 matches ({consecutive_empty}/3) — checking next page")
-                if consecutive_empty >= 3:
+                _log(f"  Page {page_num}: 0 matches ({consecutive_empty}/5) — stopping" if consecutive_empty >= 5 else f"  Page {page_num}: 0 matches ({consecutive_empty}/5) — checking next page")
+                if consecutive_empty >= 5:
                     break
             else:
                 consecutive_empty = 0
@@ -264,10 +264,8 @@ async def scrape_site(browser, site: dict, since_date: date) -> list[dict]:
         await detail_page.close()
 
 
-def build_html_email(site_name: str, jobs: list[dict], today: date) -> str:
+def _build_site_section(site_name: str, jobs: list[dict]) -> str:
     count = len(jobs)
-    date_range = today.strftime('%b %d, %Y')
-
     job_items_html = []
     for job in jobs:
         subtext_parts = [
@@ -283,30 +281,40 @@ def build_html_email(site_name: str, jobs: list[dict], today: date) -> str:
             f'<span style="color:#666;font-size:13px;">{subtext}</span>'
             f'</li>'
         )
+    body = (
+        f'<ul style="padding-left:20px;line-height:1.9;">{"".join(job_items_html)}</ul>'
+        if job_items_html else
+        '<p style="color:#aaa;font-size:13px;">No new listings today.</p>'
+    )
+    return (
+        f'<h3 style="color:#1a4a7a;margin-bottom:4px;">{site_name}</h3>'
+        f'<p style="margin-top:0;font-size:13px;color:#555;">{count} new posting{"s" if count != 1 else ""}</p>'
+        f'{body}'
+    )
 
+
+def build_html_email(results: list[tuple[str, list[dict]]], today: date) -> str:
+    total = sum(len(jobs) for _, jobs in results)
+    date_str = today.strftime('%b %d, %Y')
+    sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
+        _build_site_section(site_name, jobs) for site_name, jobs in results
+    )
     return f"""<!DOCTYPE html>
 <html>
 <body style="font-family:Arial,sans-serif;max-width:680px;margin:auto;padding:24px;color:#222;">
-  <h2 style="color:#1a4a7a;margin-bottom:4px;">{site_name} — Job Alert</h2>
-  <p style="color:#888;font-size:13px;margin-top:0;">{date_range}</p>
-  <p><strong>{count} new posting{'s' if count != 1 else ''} at {site_name}</strong></p>
-  <ul style="padding-left:20px;line-height:1.9;">
-    {"".join(job_items_html)}
-  </ul>
+  <h2 style="color:#1a4a7a;margin-bottom:4px;">Health Job Alert</h2>
+  <p style="color:#888;font-size:13px;margin-top:0;">{date_str} · {total} new posting{"s" if total != 1 else ""}</p>
+  {sections}
   <hr style="border:none;border-top:1px solid #eee;margin-top:32px;">
-  <p style="color:#bbb;font-size:12px;">
-    Scraped automatically · Remove from Task Scheduler to unsubscribe
-  </p>
+  <p style="color:#bbb;font-size:12px;">Scraped automatically</p>
 </body>
 </html>"""
 
 
-def send_email(site_name: str, jobs: list[dict], today: date) -> None:
-    subject = (
-        f"[Job Alert] {site_name} — {len(jobs)} new posting(s)"
-        f" — {today.strftime('%Y-%m-%d')}"
-    )
-    html = build_html_email(site_name, jobs, today)
+def send_email(results: list[tuple[str, list[dict]]], today: date) -> None:
+    total = sum(len(jobs) for _, jobs in results)
+    subject = f"[Job Alert] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
+    html = build_html_email(results, today)
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -338,14 +346,13 @@ async def main() -> None:
             browser = await pw.chromium.launch(headless=True)
             _log("Browser ready")
             try:
+                results = []
                 for site in SITES:
                     jobs = await scrape_site(browser, site, TODAY)
                     _log(f"{site['name']}: {len(jobs)} qualifying job(s)")
-                    if jobs:
-                        send_email(site["name"], jobs, TODAY)
-                        _log(f"{site['name']}: email sent")
-                    else:
-                        _log(f"{site['name']}: 0 postings — email skipped")
+                    results.append((site["name"], jobs))
+
+                send_email(results, TODAY)
             finally:
                 await browser.close()
     except Exception as e:
