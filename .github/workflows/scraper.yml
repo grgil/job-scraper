@@ -1,0 +1,30 @@
+name: Health Job Scraper
+
+on:
+  schedule:
+    - cron: '59 4 * * *'  # 4:59 AM UTC = 11:59 PM EST / 12:59 AM EDT
+  workflow_dispatch:        # enables manual Run button in GitHub UI
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browser
+        run: playwright install chromium --with-deps
+
+      - name: Run scraper
+        run: python scraper.py
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_APP_PASS: ${{ secrets.EMAIL_APP_PASS }}

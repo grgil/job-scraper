@@ -1,0 +1,5 @@
+.env
+scraper.log
+__pycache__/
+*.pyc
+threshold_test.py
