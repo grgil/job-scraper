@@ -36,7 +36,7 @@ SITES = [
     },
 ]
 
-TODAY = date.today()
+TODAY = date.today() - timedelta(days=1)
 
 
 
