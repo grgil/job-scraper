@@ -241,6 +241,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
                 if dp == since_date:
                     results.append({**job, **details})
                     _log(f"    MATCH  posted {dp}")
+                if dp >= since_date:
                     page_matches += 1
                 else:
                     _log(f"    Older ({dp})")
