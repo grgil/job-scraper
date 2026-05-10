@@ -238,7 +238,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
                     continue
 
                 dp = details["date_posted"]
-                if dp >= since_date:
+                if dp == since_date:
                     results.append({**job, **details})
                     _log(f"    MATCH  posted {dp}")
                     page_matches += 1
