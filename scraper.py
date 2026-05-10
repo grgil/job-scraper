@@ -278,7 +278,7 @@ def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: d
     return newest_seen < since_date - timedelta(days=2)
 
 
-def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_warning: bool = False) -> str:
+def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_warning: bool = False, newest_seen: date | None = None) -> str:
     count = len(jobs)
     job_items_html = []
     for job in jobs:
@@ -304,9 +304,10 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
         f'<p style="color:#bbb;font-size:12px;margin-top:4px;">{skipped} skipped (no structured data)</p>'
         if skipped else ""
     )
+    newest_str = newest_seen.strftime("%b %d") if newest_seen else "unknown"
     warning_note = (
-        '<p style="color:#c0392b;font-size:13px;margin-top:6px;">'
-        '&#9888; Sort may have failed — results returned out of date order. Manual check recommended.</p>'
+        f'<p style="color:#c0392b;font-size:13px;margin-top:6px;">'
+        f'&#9888; Sort may have failed — newest posting seen was from {newest_str}. Manual check recommended.</p>'
         if sort_warning else ""
     )
     return (
@@ -316,12 +317,12 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
     )
 
 
-def build_html_email(results: list[tuple[str, list[dict], int, bool]], today: date) -> str:
-    total = sum(len(jobs) for _, jobs, _, _ in results)
+def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date) -> str:
+    total = sum(len(jobs) for _, jobs, _, _, _ in results)
     date_str = today.strftime('%b %d, %Y')
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
-        _build_site_section(site_name, jobs, skipped, sort_warning)
-        for site_name, jobs, skipped, sort_warning in results
+        _build_site_section(site_name, jobs, skipped, sort_warning, newest_seen)
+        for site_name, jobs, skipped, sort_warning, newest_seen in results
     )
     return f"""<!DOCTYPE html>
 <html>
@@ -335,8 +336,8 @@ def build_html_email(results: list[tuple[str, list[dict], int, bool]], today: da
 </html>"""
 
 
-def send_email(results: list[tuple[str, list[dict], int, bool]], today: date) -> None:
-    total = sum(len(jobs) for _, jobs, _, _ in results)
+def send_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date) -> None:
+    total = sum(len(jobs) for _, jobs, _, _, _ in results)
     subject = f"[Job Alert] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
     html = build_html_email(results, today)
 
@@ -381,7 +382,7 @@ async def main() -> None:
                     if sort_warning:
                         _log(f"  {site['name']}: sort still collapsed after retry — flagging in email")
                     _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped} skipped")
-                    results.append((site["name"], jobs, skipped, sort_warning))
+                    results.append((site["name"], jobs, skipped, sort_warning, newest_seen))
 
                 send_email(results, TODAY)
             finally:
