@@ -2,7 +2,7 @@ name: Health Job Scraper
 
 on:
   schedule:
-    - cron: '0 4 * * *'   # 4:00 AM UTC = 12:00 AM EDT / 11:00 PM EST — captures yesterday's postings
+    - cron: '0 6 * * *'   # 6:00 AM UTC = 2:00 AM EDT / 1:00 AM EST — captures yesterday's postings
   workflow_dispatch:        # enables manual Run button in GitHub UI
 
 jobs:
