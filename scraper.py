@@ -211,7 +211,7 @@ async def _get_next_page_links(search_page) -> list[dict]:
     }""")
 
 
-async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict], int]:
+async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
     _log(f"Scraping {site['name']} ...")
     # Two pages: search_page stays on the results list for pagination;
     # detail_page loads each job so we never navigate search_page away.
@@ -225,6 +225,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
         results = []
         skipped = 0
         consecutive_empty = 0
+        newest_seen: date | None = None
 
         while links:
             page_matches = 0
@@ -238,6 +239,8 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
                     continue
 
                 dp = details["date_posted"]
+                if newest_seen is None or dp > newest_seen:
+                    newest_seen = dp
                 if dp == since_date:
                     results.append({**job, **details})
                     _log(f"    MATCH  posted {dp}")
@@ -261,13 +264,21 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
         else:
             _log("  No more pages")
 
-        return results, skipped
+        return results, skipped, newest_seen
     finally:
         await search_page.close()
         await detail_page.close()
 
 
-def _build_site_section(site_name: str, jobs: list[dict], skipped: int) -> str:
+def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: date) -> bool:
+    """True when the scraper hit its threshold with 0 matches and newest date seen is
+    suspiciously stale — strong signal that the server returned a broken sort order."""
+    if results or newest_seen is None:
+        return False
+    return newest_seen < since_date - timedelta(days=2)
+
+
+def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_warning: bool = False) -> str:
     count = len(jobs)
     job_items_html = []
     for job in jobs:
@@ -293,18 +304,24 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int) -> str:
         f'<p style="color:#bbb;font-size:12px;margin-top:4px;">{skipped} skipped (no structured data)</p>'
         if skipped else ""
     )
+    warning_note = (
+        '<p style="color:#c0392b;font-size:13px;margin-top:6px;">'
+        '&#9888; Sort may have failed — results returned out of date order. Manual check recommended.</p>'
+        if sort_warning else ""
+    )
     return (
         f'<h3 style="color:#1a4a7a;margin-bottom:4px;">{site_name}</h3>'
         f'<p style="margin-top:0;font-size:13px;color:#555;">{count} new posting{"s" if count != 1 else ""}</p>'
-        f'{body}{skip_note}'
+        f'{warning_note}{body}{skip_note}'
     )
 
 
-def build_html_email(results: list[tuple[str, list[dict], int]], today: date) -> str:
-    total = sum(len(jobs) for _, jobs, _ in results)
+def build_html_email(results: list[tuple[str, list[dict], int, bool]], today: date) -> str:
+    total = sum(len(jobs) for _, jobs, _, _ in results)
     date_str = today.strftime('%b %d, %Y')
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
-        _build_site_section(site_name, jobs, skipped) for site_name, jobs, skipped in results
+        _build_site_section(site_name, jobs, skipped, sort_warning)
+        for site_name, jobs, skipped, sort_warning in results
     )
     return f"""<!DOCTYPE html>
 <html>
@@ -318,8 +335,8 @@ def build_html_email(results: list[tuple[str, list[dict], int]], today: date) ->
 </html>"""
 
 
-def send_email(results: list[tuple[str, list[dict], int]], today: date) -> None:
-    total = sum(len(jobs) for _, jobs, _ in results)
+def send_email(results: list[tuple[str, list[dict], int, bool]], today: date) -> None:
+    total = sum(len(jobs) for _, jobs, _, _ in results)
     subject = f"[Job Alert] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
     html = build_html_email(results, today)
 
@@ -355,9 +372,16 @@ async def main() -> None:
             try:
                 results = []
                 for site in SITES:
-                    jobs, skipped = await scrape_site(browser, site, TODAY)
+                    jobs, skipped, newest_seen = await scrape_site(browser, site, TODAY)
+                    if _sort_collapsed(jobs, newest_seen, TODAY):
+                        _log(f"  {site['name']}: sort collapse detected (newest={newest_seen}) — retrying")
+                        await asyncio.sleep(30)
+                        jobs, skipped, newest_seen = await scrape_site(browser, site, TODAY)
+                    sort_warning = _sort_collapsed(jobs, newest_seen, TODAY)
+                    if sort_warning:
+                        _log(f"  {site['name']}: sort still collapsed after retry — flagging in email")
                     _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped} skipped")
-                    results.append((site["name"], jobs, skipped))
+                    results.append((site["name"], jobs, skipped, sort_warning))
 
                 send_email(results, TODAY)
             finally:
