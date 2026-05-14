@@ -63,6 +63,7 @@ WORKDAY_SITES = [
     {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate", "remote_only": True, "max_pages": 12},
     {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",       "remote_only": True, "max_pages": 12},
     {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                       "remote_only": True, "max_pages": 12},
+    {"name": "Cigna",           "url": "https://cigna.wd5.myworkdayjobs.com/cignacareers",                         "remote_only": True, "max_pages": 12},
     # Centene — both wd5 tenant and jobs.centene.com custom portal blocked/timing out
 ]
 
