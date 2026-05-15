@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import re
 import smtplib
 import ssl
 from datetime import date, datetime, timedelta
@@ -68,6 +69,49 @@ WORKDAY_SITES = [
 ]
 
 REMOTE_LOCATION_KEYWORDS = {"remote", "work at home", "work from home", "virtual", "telecommute", "home based"}
+
+# Title exclusion filter — applied at email-build time, not scrape time
+TITLE_EXCLUDE_PHRASES = {
+    # Nursing
+    "registered nurse", "licensed practical", "licensed vocational",
+    "nurse practitioner", "certified nursing assistant", "certified nurse anesthetist",
+    "clinical nurse specialist", "nurse midwife", "travel nurse",
+    "charge nurse", "staff nurse", "nursing supervisor",
+    "patient care tech", "patient care assistant",
+    # Allied health
+    "physical therapist", "physical therapy assistant",
+    "occupational therapist", "occupational therapy assistant",
+    "speech language", "speech-language", "audiologist",
+    "respiratory therapist", "respiratory therapy",
+    # Imaging
+    "radiologic technolog", "radiology tech", "x-ray tech",
+    "ultrasound tech", "sonographer", "mri tech", "ct tech",
+    "nuclear medicine tech", "mammograph",
+    # Lab / procedural
+    "lab technician", "laboratory technician", "phlebotomist",
+    "histotechnologist", "cytotechnologist", "medical laboratory",
+    "surgical tech", "scrub tech", "sterile processing", "central sterile",
+    "ekg tech", "eeg tech", "cardiac tech", "echo tech",
+    "dialysis tech", "ophthalm", "optometr",
+    "dental assistant", "dental hygienist",
+    # Pharmacy (bedside)
+    "pharmacist", "pharmacy technician",
+    # Clinical support
+    "medical assistant", "medical scribe",
+    "patient transporter", "patient transport",
+    # Facilities / non-clinical
+    "housekeeper", "housekeeping", "environmental services",
+    "food service", "food and nutrition", "dietary aide",
+    "dietary tech", "dietary assistant",
+    "security officer", "security guard", "public safety officer",
+    "chaplain", "pastoral care",
+    "maintenance technician", "facilities technician",
+    "valet", "groundskeeper",
+    # Front desk / scheduling
+    "patient scheduler", "appointment scheduler",
+    "front desk", "receptionist",
+}
+TITLE_EXCLUDE_WORDS = {"rn", "lpn", "lvn", "cna", "crna", "cns", "emt", "paramedic"}
 
 # iCIMS ATS — URLs need verification (public vs employee portals)
 ICIMS_SITES: list[dict] = []
@@ -634,7 +678,18 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
 
 
 # ---------------------------------------------------------------------------
-# Email builders (unchanged from v1)
+# Title exclusion filter
+# ---------------------------------------------------------------------------
+
+def _is_excluded_title(title: str) -> bool:
+    t = title.lower()
+    if any(phrase in t for phrase in TITLE_EXCLUDE_PHRASES):
+        return True
+    return any(re.search(rf'\b{re.escape(word)}\b', t) for word in TITLE_EXCLUDE_WORDS)
+
+
+# ---------------------------------------------------------------------------
+# Email builders
 # ---------------------------------------------------------------------------
 
 def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: date) -> bool:
@@ -646,9 +701,11 @@ def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: d
 
 
 def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_warning: bool = False, newest_seen: date | None = None) -> str:
-    count = len(jobs)
+    shown_jobs = [j for j in jobs if not _is_excluded_title(j["title"])]
+    filtered = len(jobs) - len(shown_jobs)
+    count = len(shown_jobs)
     job_items_html = []
-    for job in jobs:
+    for job in shown_jobs:
         subtext_parts = [
             job["location"] or "Location not listed",
             job.get("occupational_category", ""),
@@ -671,6 +728,10 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
         f'<p style="color:#bbb;font-size:12px;margin-top:4px;">{skipped} skipped (no structured data)</p>'
         if skipped else ""
     )
+    filter_note = (
+        f'<p style="color:#bbb;font-size:12px;margin-top:2px;">{filtered} filtered (clinical/non-informatics title)</p>'
+        if filtered else ""
+    )
     newest_str = newest_seen.strftime("%b %d") if newest_seen else "unknown"
     warning_note = (
         f'<p style="color:#c0392b;font-size:13px;margin-top:6px;">'
@@ -680,12 +741,12 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
     return (
         f'<h3 style="color:#1a4a7a;margin-bottom:4px;">{site_name}</h3>'
         f'<p style="margin-top:0;font-size:13px;color:#555;">{count} new posting{"s" if count != 1 else ""}</p>'
-        f'{warning_note}{body}{skip_note}'
+        f'{warning_note}{body}{skip_note}{filter_note}'
     )
 
 
 def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date) -> str:
-    total = sum(len(jobs) for _, jobs, _, _, _ in results)
+    total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"]))
     date_str = today.strftime('%b %d, %Y')
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
         _build_site_section(site_name, jobs, skipped, sort_warning, newest_seen)
@@ -705,7 +766,7 @@ def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None
 
 
 def send_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date, label: str = "") -> None:
-    total = sum(len(jobs) for _, jobs, _, _, _ in results)
+    total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"]))
     tag = f" [{label}]" if label else ""
     subject = f"[Job Alert{tag}] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
     html = build_html_email(results, today)
