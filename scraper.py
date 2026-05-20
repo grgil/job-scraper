@@ -4,6 +4,7 @@ import os
 import re
 import smtplib
 import ssl
+import sys
 from datetime import date, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -11,6 +12,10 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
+
+# Force UTF-8 console output — Windows cp1252 crashes on Unicode job titles
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_DIR = Path(__file__).parent
 LOG_FILE = BASE_DIR / "scraper.log"
@@ -43,6 +48,7 @@ SITES = [
             "?sortBy=postingdate&descending=true"
         ),
         "location_keywords": {"lake norman", "mooresville"},
+        "max_pages": 12,
     },
     {
         "name": "Duke Health (Remote)",
@@ -51,6 +57,7 @@ SITES = [
             "?sortBy=postingdate&descending=true"
         ),
         "remote_only": True,
+        "max_pages": 12,
     },
 ]
 
@@ -64,8 +71,26 @@ WORKDAY_SITES = [
     {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate", "remote_only": True, "max_pages": 12},
     {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",       "remote_only": True, "max_pages": 12},
     {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                       "remote_only": True, "max_pages": 12},
-    {"name": "Cigna",           "url": "https://cigna.wd5.myworkdayjobs.com/cignacareers",                         "remote_only": True, "max_pages": 12},
+    {"name": "Cigna",           "url": "https://cigna.wd5.myworkdayjobs.com/cignacareers",                       "remote_only": True, "max_pages": 12},
+    # Nashville/Chattanooga hybrid — no filter; all jobs (remote + on-site) go to regional email
+    {"name": "VUMC",            "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers",                        "remote_only": False, "max_pages": 15},
+    # Roanoke/Richmond hybrid — no filter; all jobs (remote + on-site) go to regional email
+    {"name": "Carilion Clinic", "url": "https://carilionclinic.wd12.myworkdayjobs.com/External_Careers",        "remote_only": False, "max_pages": 12},
+    # Wellstar — Atlanta metro local + remote split
+    {"name": "Wellstar Health (Atlanta)", "url": "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers",
+     "location_keywords": {"atlanta", "marietta", "smyrna", "kennesaw", "woodstock", "cartersville", "douglasville", "newnan", "austell", "acworth"}, "max_pages": 12},
+    {"name": "Wellstar Health (Remote)",  "url": "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers",      "remote_only": True, "max_pages": 12},
+    # Remote-only vendors / AMCs
+    {"name": "WVU Medicine",    "url": "https://wvumedicine.wd1.myworkdayjobs.com/UHA",                         "remote_only": True, "max_pages": 12},
+    {"name": "Solventum (3M HIS)", "url": "https://healthcare.wd1.myworkdayjobs.com/Search",                    "remote_only": True, "max_pages": 12},
+    {"name": "Veradigm",        "url": "https://veradigm.wd12.myworkdayjobs.com/VR",                            "remote_only": True, "max_pages": 6},
+    # Waystar — Atlanta + Louisville local + remote split
+    {"name": "Waystar (Atlanta / Louisville)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",
+     "location_keywords": {"atlanta", "louisville"}, "max_pages": 6},
+    {"name": "Waystar (Remote)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",                        "remote_only": True, "max_pages": 6},
     # Centene — both wd5 tenant and jobs.centene.com custom portal blocked/timing out
+    # Atrium Health (aah.wd5) — held pending batch refresh fix
+    # CorroHealth — Workday maintenance page, blocked
 ]
 
 REMOTE_LOCATION_KEYWORDS = {"remote", "work at home", "work from home", "virtual", "telecommute", "home based"}
@@ -76,17 +101,17 @@ TITLE_EXCLUDE_PHRASES = {
     "registered nurse", "licensed practical", "licensed vocational",
     "nurse practitioner", "certified nursing assistant", "certified nurse anesthetist",
     "clinical nurse specialist", "nurse midwife", "travel nurse",
-    "charge nurse", "staff nurse", "nursing supervisor",
-    "patient care tech", "patient care assistant",
+    "charge nurse", "staff nurse", "nursing supervisor", "nurse manager",
+    "patient care tech", "patient care assistant", "nursing",
     # Allied health
     "physical therapist", "physical therapy assistant",
-    "occupational therapist", "occupational therapy assistant",
-    "speech language", "speech-language", "audiologist",
-    "respiratory therapist", "respiratory therapy",
+    "occupational therapist", "occupational therapy assistant", "speech",
+    "speech language", "speech-language", "audiologist", "physiologist",
+    "respiratory therapist", "respiratory therapy", "advanced practice",
     # Imaging
     "radiologic technolog", "radiology tech", "x-ray tech",
     "ultrasound tech", "sonographer", "mri tech", "ct tech",
-    "nuclear medicine tech", "mammograph",
+    "nuclear medicine tech", "mammograph", "pathologist",
     # Lab / procedural
     "lab technician", "laboratory technician", "phlebotomist",
     "histotechnologist", "cytotechnologist", "medical laboratory",
@@ -106,15 +131,63 @@ TITLE_EXCLUDE_PHRASES = {
     "security officer", "security guard", "public safety officer",
     "chaplain", "pastoral care",
     "maintenance technician", "facilities technician",
-    "valet", "groundskeeper",
+    "valet", "groundskeeper", "supply chain",
     # Front desk / scheduling
     "patient scheduler", "appointment scheduler",
-    "front desk", "receptionist",
+    "front desk", "receptionist", "welcome",
+    "parking assistant",
+    # Rad tech shorthand (not caught by "radiologic technolog" / "radiology tech")
+    "rad tech",
+    # Pharmacy tech shorthand (not caught by "pharmacy technician")
+    "pharmacy tech",
+    # Bedside support / CNA-adjacent
+    "care partner", "patient support assistant",
+    # Allied health / EMS
+    "athletic trainer", "ambulance attendant",
+    "rehab aide", "rehabilitation aide",
+    "polysomnography",
+    "audiology",
+    # Nursing roles not caught by "registered nurse" / "nurse manager"
+    "nurse residency", "nurse case manager",
+    "lic practical",        # "Lic Practical Nurse" abbreviation
+    "nurse supervisor",     # "nursing supervisor" was in list; "nurse supervisor" wasn't
+    "nurse mgr",            # forward abbreviation
+    "mgr, nurse",           # "Mgr, Nurse" reversed form seen in Emory listings
+    # Dietary variant
+    "kitchen",
+    # ED tech (not caught by "patient care tech")
+    "emergency department tech", "ed tech",
+    # Mental health therapist (direct patient care; not behavioral health admin/management)
+    "primary therapist",
+    # Lab / clinical tech shorthand (not caught by "lab technician")
+    "med asst",             # "Coord, Med Asst" and similar abbreviations
+    "neurodiagnostic",      # nerve conduction / neurodiagnostic tech roles
+    "specimen processing",  # lab specimen handling tech (distinct from sterile processing)
 }
-TITLE_EXCLUDE_WORDS = {"rn", "lpn", "lvn", "cna", "crna", "cns", "emt", "paramedic"}
+TITLE_EXCLUDE_WORDS = {"rn", "lpn", "lvn", "cna", "crna", "cns", "emt", "paramedic",
+                       "scribe", "app", "sales",
+                       "np",    # NP (nurse practitioner) — catches "NP/PA" and similar
+                       "acnp",  # Acute Care Nurse Practitioner credential
+                       }
 
 # iCIMS ATS — URLs need verification (public vs employee portals)
 ICIMS_SITES: list[dict] = []
+
+# Emory Healthcare — DirectEmployers/Jobsyn SPA (emory.jobs)
+# Scraper uses response interception; direct API fetch always returns 403.
+# max_pages kept at 20 during verification; remove cap once confirmed reliable.
+EMORY_SITES = [
+    {
+        "name": "Emory Healthcare (Atlanta)",
+        "page_url": "https://emory.jobs/jobs/",
+        "location_keywords": {
+            "atlanta", "decatur", "johns creek", "dunwoody", "sandy springs",
+            "tucker", "lithonia", "brookhaven", "clarkston", "college park",
+            "east point", "forest park",
+        },
+        "remote_only": False,
+    },
+]
 
 TODAY = date.today() - timedelta(days=1)
 
@@ -330,11 +403,10 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
         while links:
             page_matches = 0
             for i, job in enumerate(links, 1):
-                _log(f"  [p{page_num}/{i}] {job['title'][:72]}")
                 details = await _get_job_details(detail_page, job["url"])
 
                 if details is None:
-                    _log("    No JSON-LD — skipping")
+                    _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
                     skipped += 1
                     continue
 
@@ -353,31 +425,31 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
                         qualifies = True
                     if qualifies:
                         results.append({**job, **details})
-                        _log(f"    MATCH  posted {dp}" + (" [remote]" if is_remote else ""))
+                        _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {job['title'][:60]}")
                     else:
-                        _log(f"    SKIP   posted {dp} — location not matching ({details.get('location')})")
+                        _log(f"  [p{page_num}/{i}] SKIP  {dp} ({details.get('location')}) — {job['title'][:60]}")
                 if dp >= since_date:
                     page_matches += 1
-                else:
-                    _log(f"    Older ({dp})")
 
             freshness = _page_freshness(newest_seen)
             if page_matches == 0:
                 consecutive_empty += 1
                 _log(
-                    f"  Page {page_num}: 0 matches ({consecutive_empty}/5), {freshness}"
-                    f" — {'stopping' if consecutive_empty >= 5 else 'checking next page'}"
+                    f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness}"
+                    f" — {'stopping' if consecutive_empty >= 5 else 'next'}"
                 )
                 if consecutive_empty >= 5:
                     break
             else:
-                _log(f"  Page {page_num}: {page_matches} match(es), {freshness}")
+                _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
                 consecutive_empty = 0
 
             page_num += 1
+            max_pages = site.get("max_pages")
+            if max_pages and page_num > max_pages:
+                _log(f"  Page limit ({max_pages}) reached — stopping")
+                break
             links = await _get_next_page_links(search_page)
-            if links:
-                _log(f"  {len(links)} job(s) on page {page_num}")
         else:
             _log("  No more pages")
 
@@ -473,11 +545,10 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
         while links:
             page_matches = 0
             for i, job in enumerate(links, 1):
-                _log(f"  [p{page_num}/{i}] {job['title'][:72]}")
                 details = await _get_job_details(detail_page, job["url"])
 
                 if details is None:
-                    _log("    No JSON-LD — skipping")
+                    _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
                     skipped += 1
                     continue
 
@@ -496,25 +567,23 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                         qualifies = True
                     if qualifies:
                         results.append({**job, **details})
-                        _log(f"    MATCH  posted {dp}" + (" [remote]" if is_remote else ""))
+                        _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {job['title'][:60]}")
                     else:
-                        _log(f"    SKIP   posted {dp} — not matching ({details.get('location')})")
+                        _log(f"  [p{page_num}/{i}] SKIP  {dp} ({details.get('location')}) — {job['title'][:60]}")
                 if dp >= since_date:
                     page_matches += 1
-                else:
-                    _log(f"    Older ({dp})")
 
             freshness = _page_freshness(newest_seen)
             if page_matches == 0:
                 consecutive_empty += 1
                 _log(
-                    f"  Page {page_num}: 0 matches ({consecutive_empty}/5), {freshness}"
-                    f" — {'stopping' if consecutive_empty >= 5 else 'checking next page'}"
+                    f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness}"
+                    f" — {'stopping' if consecutive_empty >= 5 else 'next'}"
                 )
                 if consecutive_empty >= 5:
                     break
             else:
-                _log(f"  Page {page_num}: {page_matches} match(es), {freshness}")
+                _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
                 consecutive_empty = 0
 
             page_num += 1
@@ -523,8 +592,6 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                 _log(f"  Page limit ({max_pages}) reached — stopping")
                 break
             links = await _get_workday_next_page(search_page)
-            if links:
-                _log(f"  {len(links)} job(s) on page {page_num}")
         else:
             _log("  No more pages")
 
@@ -632,11 +699,10 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
         while links:
             page_matches = 0
             for i, job in enumerate(links, 1):
-                _log(f"  [p{page_num}/{i}] {job['title'][:72]}")
                 details = await _get_job_details(detail_page, job["url"])
 
                 if details is None:
-                    _log("    No JSON-LD — skipping")
+                    _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
                     skipped += 1
                     continue
 
@@ -645,29 +711,25 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
                     newest_seen = dp
                 if dp == since_date:
                     results.append({**job, **details})
-                    _log(f"    MATCH  posted {dp}")
+                    _log(f"  [p{page_num}/{i}] MATCH {dp}   — {job['title'][:60]}")
                 if dp >= since_date:
                     page_matches += 1
-                else:
-                    _log(f"    Older ({dp})")
 
             freshness = _page_freshness(newest_seen)
             if page_matches == 0:
                 consecutive_empty += 1
                 _log(
-                    f"  Page {page_num}: 0 matches ({consecutive_empty}/5), {freshness}"
-                    f" — {'stopping' if consecutive_empty >= 5 else 'checking next page'}"
+                    f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness}"
+                    f" — {'stopping' if consecutive_empty >= 5 else 'next'}"
                 )
                 if consecutive_empty >= 5:
                     break
             else:
-                _log(f"  Page {page_num}: {page_matches} match(es), {freshness}")
+                _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
                 consecutive_empty = 0
 
             page_num += 1
             links = await _get_icims_next_page(search_page)
-            if links:
-                _log(f"  {len(links)} job(s) on page {page_num}")
         else:
             _log("  No more pages")
 
@@ -675,6 +737,152 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
     finally:
         await search_page.close()
         await detail_page.close()
+
+
+# ---------------------------------------------------------------------------
+# Emory Healthcare (DirectEmployers / Jobsyn)
+# ---------------------------------------------------------------------------
+
+async def _intercept_emory_api(page) -> dict:
+    """Await the next prod-search-api.jobsyn.org response on this page."""
+    future: asyncio.Future = asyncio.get_event_loop().create_future()
+
+    async def on_response(response):
+        if "prod-search-api.jobsyn.org" in response.url and not future.done():
+            try:
+                body = await response.json()
+                future.set_result(body)
+            except Exception as exc:
+                future.set_exception(exc)
+
+    page.on("response", on_response)
+    try:
+        return await asyncio.wait_for(future, timeout=20.0)
+    except asyncio.TimeoutError:
+        return {}
+    finally:
+        page.remove_listener("response", on_response)
+
+
+async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
+    _log(f"Scraping {site['name']} (Jobsyn/DirectEmployers) ...")
+    page = await browser.new_page()
+    try:
+        loc_kw = site.get("location_keywords", set())
+        max_pages = site.get("max_pages")
+        results: list[dict] = []
+        skipped = 0
+        consecutive_old = 0
+        newest_seen: date | None = None
+        page_num = 1
+
+        # Page 1: capture the SPA's initial API call during page load
+        _log(f"  Loading {site['page_url']}")
+        intercept_task = asyncio.ensure_future(_intercept_emory_api(page))
+        await page.goto(site["page_url"], wait_until="networkidle", timeout=90_000)
+        await page.wait_for_timeout(2_000)
+        api_data = await intercept_task
+
+        while api_data:
+            jobs_raw = api_data.get("jobs") or []
+            pagination = api_data.get("pagination") or {}
+            has_more = pagination.get("has_more_pages", False)
+            _log(f"  {len(jobs_raw)} job(s) on page {page_num}")
+
+            if not jobs_raw:
+                break
+
+            page_had_fresh = False
+            for job in jobs_raw:
+                raw_title = (job.get("title_exact") or "").strip()
+                raw_date  = (job.get("date_new") or "")[:10]
+                title_slug = (job.get("title_slug") or "").strip()
+                guid       = (job.get("guid") or "").strip()
+                loc_exact  = (job.get("location_exact") or "").strip()
+                city       = (job.get("city_exact") or "").strip()
+                state      = (job.get("state_short") or "").strip()
+
+                if not raw_title or not raw_date or not guid:
+                    skipped += 1
+                    continue
+
+                if _is_excluded_title(raw_title):
+                    skipped += 1
+                    continue
+
+                try:
+                    dp = date.fromisoformat(raw_date)
+                except ValueError:
+                    skipped += 1
+                    continue
+
+                if newest_seen is None or dp > newest_seen:
+                    newest_seen = dp
+
+                if dp < since_date:
+                    continue
+
+                page_had_fresh = True
+
+                if dp != since_date:
+                    continue
+
+                job_url = f"https://emory.jobs/jobs/{title_slug}/{guid}/"
+                location = loc_exact or (f"{city}, {state}" if city and state else city or state)
+                loc_str = location.lower()
+
+                if loc_kw and not any(k in loc_str for k in loc_kw):
+                    _log(f"  SKIP  {dp} ({location}) — {raw_title[:60]}")
+                    continue
+
+                results.append({
+                    "title": raw_title,
+                    "url": job_url,
+                    "date_posted": dp,
+                    "location": location,
+                    "occupational_category": "",
+                    "work_hours": "",
+                    "employment_type": "",
+                })
+                _log(f"  MATCH {dp}   — {raw_title[:60]}")
+
+            freshness = _page_freshness(newest_seen)
+            if not page_had_fresh:
+                consecutive_old += 1
+                _log(
+                    f"  Page {page_num}: all old ({consecutive_old}/3), {freshness}"
+                    f" — {'stopping' if consecutive_old >= 3 else 'checking next'}"
+                )
+                if consecutive_old >= 3:
+                    break
+            else:
+                consecutive_old = 0
+                _log(f"  Page {page_num}: fresh jobs, {freshness}")
+
+            if not has_more:
+                _log("  No more pages (API)")
+                break
+
+            page_num += 1
+            if max_pages and page_num > max_pages:
+                _log(f"  Page limit ({max_pages}) reached — stopping")
+                break
+
+            # Click the full-width "More" load-more button and intercept the API response
+            more_btn = page.locator("button:not(.text-sm)").filter(has_text="More")
+            if not await more_btn.count():
+                _log("  More button not found in DOM — stopping")
+                break
+            intercept_task = asyncio.ensure_future(_intercept_emory_api(page))
+            await more_btn.first.click()
+            api_data = await intercept_task
+            if not api_data:
+                _log(f"  WARN — no API response after More click on page {page_num}")
+                break
+
+        return results, skipped, newest_seen
+    finally:
+        await page.close()
 
 
 # ---------------------------------------------------------------------------
@@ -828,6 +1036,7 @@ async def main() -> None:
                 # Workday) stops early when dates go stale so goes last.
                 ordered = (
                     [(scrape_workday_site, s) for s in WORKDAY_SITES if s.get("remote_only") or s.get("location_keywords")]
+                    + [(scrape_emory_site, s) for s in EMORY_SITES]
                     + [(scrape_site, s) for s in SITES]
                     + [(scrape_icims_site, s) for s in ICIMS_SITES]
                     + [(scrape_workday_site, s) for s in WORKDAY_SITES if not s.get("remote_only") and not s.get("location_keywords")]
