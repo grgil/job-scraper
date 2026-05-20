@@ -232,6 +232,21 @@ def _extract_location(json_ld: dict) -> str:
     return ", ".join(p for p in parts if p)
 
 
+def _parse_posted_on(s: str) -> date | None:
+    """Convert Workday CXS 'postedOn' string to a date. Returns None if unparseable."""
+    t = s.lower().strip()
+    if not t:
+        return None
+    if "today" in t:
+        return date.today()
+    if "yesterday" in t:
+        return date.today() - timedelta(days=1)
+    m = re.search(r"(\d+)\+?\s*day", t)
+    if m:
+        return date.today() - timedelta(days=int(m.group(1)))
+    return date.today()
+
+
 def _rotate_log() -> None:
     if not LOG_FILE.exists():
         return
@@ -559,59 +574,180 @@ async def _get_workday_next_page(page) -> list[dict]:
     }""")
 
 
+_WORKDAY_DOM_LINKS_JS = """() => {
+    const seen = new Set();
+    const results = [];
+    document.querySelectorAll('a[data-automation-id="jobTitle"]').forEach(a => {
+        if (seen.has(a.href)) return;
+        seen.add(a.href);
+        const title = (a.innerText || a.textContent || '').trim();
+        if (title.length > 3) results.push({ title, url: a.href });
+    });
+    return results;
+}"""
+
+
 async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
     _log(f"Scraping {site['name']} (Workday) ...")
     search_page = await browser.new_page()
     detail_page = await browser.new_page()
+
+    remote_only = site.get("remote_only", False)
+    loc_kw = site.get("location_keywords", set())
+    base_url = site["url"].rstrip("/")   # externalPath is relative to site path, e.g. /MUSC/job/...
+    _cxs_buf: list[dict] = []
+
+    async def _on_cxs(response):
+        if "/wday/cxs/" not in response.url or response.status != 200:
+            return
+        if "json" not in response.headers.get("content-type", ""):
+            return
+        try:
+            data = await response.json()
+            if not isinstance(data, dict):
+                return
+            postings = data.get("jobPostings", [])
+            if postings:
+                _cxs_buf.extend(postings)
+        except Exception:
+            pass
+
+    search_page.on("response", _on_cxs)
+
     try:
-        links = await _get_workday_job_links(search_page, site)
-        page_num = 1
-        _log(f"  {len(links)} job(s) on page {page_num}")
+        _log(f"  Loading {site['url']}")
+        await search_page.goto(site["url"], wait_until="networkidle", timeout=90_000)
+        await search_page.wait_for_timeout(500)
+
+        use_cxs = bool(_cxs_buf)
+        if use_cxs:
+            _log(f"  CXS intercept active ({len(_cxs_buf)} postings on page 1)")
+        else:
+            _log(f"  CXS not intercepted — using DOM+JSON-LD fallback")
+            try:
+                await search_page.wait_for_function(
+                    "() => document.querySelectorAll('a[data-automation-id=\"jobTitle\"]').length >= 5",
+                    timeout=30_000,
+                )
+            except PlaywrightTimeoutError:
+                _log(f"  {site['name']}: WARN — job titles timed out")
+                return [], 0, None
 
         results = []
         skipped = 0
         consecutive_empty = 0
         newest_seen: date | None = None
-        page_dates: list[date] = []
+        page_num = 1
+        # DOM fallback only: page 1 is already loaded, subsequent pages come from _get_workday_next_page
+        dom_pending: list[dict] | None = None
 
-        while links:
+        while True:
+            # ── Collect this page's job list ─────────────────────────────────
+            if use_cxs:
+                raw_page = list(_cxs_buf)
+                _cxs_buf.clear()
+            else:
+                raw_page = (
+                    await search_page.evaluate(_WORKDAY_DOM_LINKS_JS)
+                    if page_num == 1
+                    else (dom_pending or [])
+                )
+
+            if not raw_page:
+                _log("  No more pages")
+                break
+
+            _log(f"  {len(raw_page)} job(s) on page {page_num}")
             page_matches = 0
-            page_dates = []
-            for i, job in enumerate(links, 1):
-                details = await _get_job_details(detail_page, job["url"])
+            page_dates: list[date] = []
 
-                if details is None:
-                    _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
-                    skipped += 1
-                    continue
+            for i, job in enumerate(raw_page, 1):
+                if use_cxs:
+                    title = re.sub(r" {2,}", " ", (job.get("title") or "").strip())
+                    ext_path = job.get("externalPath", "")
+                    if not title or not ext_path:
+                        skipped += 1
+                        continue
+                    url = base_url + ext_path
+                    cxs_loc = (job.get("locationsText") or "").lower()
+                    dp = _parse_posted_on(job.get("postedOn", "")) or since_date
 
-                dp = details["date_posted"]
-                page_dates.append(dp)
-                if newest_seen is None or dp > newest_seen:
-                    newest_seen = dp
-                if dp == since_date:
-                    loc = (details.get("location") or "").lower()
-                    loc_kw = site.get("location_keywords", set())
-                    is_remote = any(k in loc for k in REMOTE_LOCATION_KEYWORDS)
-                    if site.get("remote_only"):
-                        qualifies = is_remote
-                    elif loc_kw:
-                        qualifies = any(k in loc for k in loc_kw)
-                    else:
-                        qualifies = True
-                    if qualifies:
-                        results.append({**job, **details})
-                        _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {job['title'][:60]}")
-                    else:
-                        _log(f"  [p{page_num}/{i}] SKIP  {dp} ({details.get('location')}) — {job['title'][:60]}")
-                if dp >= since_date:
-                    page_matches += 1
+                    if remote_only:
+                        # CXS locationsText is the office address, not work arrangement —
+                        # visit detail page to reliably detect remote jobs.
+                        details = await _get_job_details(detail_page, url)
+                        if details is None:
+                            _log(f"  [p{page_num}/{i}] No JSON-LD — {title[:60]}")
+                            skipped += 1
+                            continue
+                        dp = details["date_posted"]
+                        loc = (details.get("location") or "").lower()
+                        is_remote = any(k in loc for k in REMOTE_LOCATION_KEYWORDS)
+                        page_dates.append(dp)
+                        if newest_seen is None or dp > newest_seen:
+                            newest_seen = dp
+                        if dp == since_date:
+                            if is_remote:
+                                results.append({**{"title": title, "url": url}, **details})
+                                _log(f"  [p{page_num}/{i}] MATCH {dp}[r] — {title[:60]}")
+                            else:
+                                _log(f"  [p{page_num}/{i}] SKIP  {dp} ({details.get('location')}) — {title[:60]}")
+                        if dp >= since_date:
+                            page_matches += 1
+                        continue
+
+                    # Non-remote_only: location filter from CXS, no detail page needed
+                    is_remote = any(k in cxs_loc for k in REMOTE_LOCATION_KEYWORDS)
+                    if loc_kw and not any(k in cxs_loc for k in loc_kw):
+                        _log(f"  [p{page_num}/{i}] SKIP  ({job.get('locationsText')}) — {title[:60]}")
+                        page_dates.append(dp)
+                        if dp >= since_date:
+                            page_matches += 1
+                        continue
+
+                    page_dates.append(dp)
+                    if newest_seen is None or dp > newest_seen:
+                        newest_seen = dp
+                    if dp == since_date:
+                        results.append({
+                            "title": title, "url": url, "date_posted": dp,
+                            "location": job.get("locationsText", ""),
+                            "employment_type": "", "work_hours": "", "occupational_category": "",
+                        })
+                        _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {title[:60]}")
+                    if dp >= since_date:
+                        page_matches += 1
+
+                else:
+                    # DOM+JSON-LD fallback — identical to original
+                    details = await _get_job_details(detail_page, job["url"])
+                    if details is None:
+                        _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
+                        skipped += 1
+                        continue
+                    dp = details["date_posted"]
+                    page_dates.append(dp)
+                    if newest_seen is None or dp > newest_seen:
+                        newest_seen = dp
+                    if dp == since_date:
+                        loc = (details.get("location") or "").lower()
+                        is_remote = any(k in loc for k in REMOTE_LOCATION_KEYWORDS)
+                        if remote_only:
+                            qualifies = is_remote
+                        elif loc_kw:
+                            qualifies = any(k in loc for k in loc_kw)
+                        else:
+                            qualifies = True
+                        if qualifies:
+                            results.append({**job, **details})
+                            _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {job['title'][:60]}")
+                        else:
+                            _log(f"  [p{page_num}/{i}] SKIP  {dp} ({details.get('location')}) — {job['title'][:60]}")
+                    if dp >= since_date:
+                        page_matches += 1
 
             freshness = _page_freshness(newest_seen)
 
-            # Batch refresh detection: all dates on page identical AND newer than since_date
-            # means Workday refreshed all datePosted to today — no results will qualify on
-            # today's run; tomorrow's run would flood without the max_results cap.
             if page_dates and len(set(page_dates)) == 1 and page_dates[0] > since_date:
                 _log(f"  WARN — batch refresh suspected ({site['name']}): all dates = {page_dates[0]}, since_date = {since_date} — stopping")
                 break
@@ -629,13 +765,24 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                 consecutive_empty = 0
 
             page_num += 1
-            max_pages = site.get("max_pages")
-            if max_pages and page_num > max_pages:
-                _log(f"  Page limit ({max_pages}) reached — stopping")
+            if site.get("max_pages") and page_num > site["max_pages"]:
+                _log(f"  Page limit ({site['max_pages']}) reached — stopping")
                 break
-            links = await _get_workday_next_page(search_page)
-        else:
-            _log("  No more pages")
+
+            # ── Advance to next page ──────────────────────────────────────────
+            # _get_workday_next_page clicks, waits for DOM refresh, and returns links.
+            # For CXS: the wait also guarantees the CXS response has arrived.
+            next_links = await _get_workday_next_page(search_page)
+            if not next_links:
+                _log("  No more pages")
+                break
+            if use_cxs and not _cxs_buf:
+                # Next-page DOM changed but CXS didn't fire — fall back for remaining pages
+                _log(f"  WARN — CXS silent on page {page_num}, switching to DOM+JSON-LD")
+                use_cxs = False
+                dom_pending = next_links
+            elif not use_cxs:
+                dom_pending = next_links
 
         max_results = site.get("max_results")
         if max_results and len(results) > max_results:
