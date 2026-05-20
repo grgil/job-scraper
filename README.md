@@ -1,43 +1,29 @@
 # Health Job Scraper
 
-Scrapes VCU Health and UVA Health careers pages daily and sends a single email alert for jobs posted today. Uses Playwright (headless Chromium) because both sites are fully JavaScript-rendered. Runs automatically via GitHub Actions.
+Daily job alert scraper covering 19 health system and payer portals across Workday, Phenom, iCIMS, and DirectEmployers (Jobsyn) ATS platforms. Uses Playwright (headless Chromium) for JavaScript-rendered pages. Runs automatically via GitHub Actions and sends targeted email digests by market.
 
 ---
 
-## Prerequisites
+## Email digests
 
-- Python 3.10 or newer
-- A Gmail account with 2FA enabled
+| Digest | Orgs |
+|--------|------|
+| **Regional** | VCU Health, UVA Health, Bon Secours, Carilion Clinic, Duke (Lake Norman), Atrium Health, Emory (Atlanta), Prisma Health (Greenville), Wellstar (Atlanta), Ascension (Regional) |
+| **Remote** | MUSC, Duke, VUMC, WVU Medicine, OhioHealth, Emory (Remote), Prisma Health (Remote), Wellstar (Remote), Ascension (Remote) |
+| **Payer** | Humana, Elevance, Cigna, Solventum, Veradigm, Waystar *(commented out — activate when ready)* |
 
 ---
 
 ## Setup
 
-### 1. Install Python dependencies
+### 1. Install dependencies
 
 ```
 pip install -r requirements.txt
+playwright install chromium --with-deps
 ```
 
-### 2. Install Playwright's Chromium browser
-
-```
-python -m playwright install chromium
-```
-
-This downloads a standalone Chromium binary (~150 MB) that Playwright manages separately from any browser you have installed.
-
-### 3. Generate a Gmail App Password
-
-Regular Gmail passwords will not work — Google blocks them for SMTP. You need an App Password:
-
-1. Go to [myaccount.google.com/security](https://myaccount.google.com/security)
-2. Enable **2-Step Verification** if not already on
-3. Search for **App passwords** (or go to myaccount.google.com/apppasswords)
-4. App name: `HealthJobScraper` → click **Create**
-5. Copy the 16-character password shown (it includes spaces — keep them)
-
-### 4. Configure .env
+### 2. Configure secrets
 
 Copy `.env.example` to `.env` and fill in your values:
 
@@ -47,63 +33,69 @@ EMAIL_TO=where-alerts-go@example.com
 EMAIL_APP_PASS=xxxx xxxx xxxx xxxx
 ```
 
-`EMAIL_FROM` and `EMAIL_TO` can be the same address.
+`EMAIL_APP_PASS` must be a [Gmail App Password](https://myaccount.google.com/apppasswords) — regular passwords are blocked by Google's SMTP.
 
----
-
-## Running manually
+### 3. Run locally
 
 ```
 python scraper.py
 ```
 
-The script prints progress for each site and each job card it checks. One combined email covering both sites is sent at the end regardless of match count.
-
 ---
 
-## Scheduling with GitHub Actions
+## GitHub Actions
 
-The workflow at `.github/workflows/scraper.yml` runs automatically at 11:59 PM EST every day. No local machine needs to stay on.
+The workflow at `.github/workflows/scraper.yml` runs at **6:00 AM UTC** (2 AM EDT) daily and can also be triggered manually from the Actions tab.
 
 ### Required repository secrets
 
-Add these under **Settings → Secrets and variables → Actions → New repository secret**:
-
 | Secret | Value |
-|---|---|
-| `EMAIL_FROM` | your-gmail@gmail.com |
-| `EMAIL_TO` | where-alerts-go@example.com |
-| `EMAIL_APP_PASS` | the 16-character App Password |
+|--------|-------|
+| `EMAIL_FROM` | sending Gmail address |
+| `EMAIL_TO` | recipient address |
+| `EMAIL_APP_PASS` | 16-character Gmail App Password |
 
-### Manual trigger
+### State persistence
 
-Go to **Actions → Health Job Scraper → Run workflow** to fire it on demand.
+`seen_jobs.json` is committed back to the repo after each run by the workflow bot. This deduplicates jobs across runs and prevents batch-refresh floods (e.g. Workday portals that reset all `datePosted` fields nightly). The first run after setup will include all currently active jobs; subsequent runs show only new ones.
 
-### Checking run logs
+---
 
-Click any completed run in the Actions tab to see full scraper output, including which jobs were found and whether the email was sent.
+## Adding a new org
+
+1. Run `inspect_selectors.py` to identify the ATS platform and selectors
+2. Add an entry to the appropriate list in `scraper.py`:
+   - Workday → `WORKDAY_SITES`
+   - Phenom → `SITES`
+   - iCIMS → `ICIMS_SITES`
+   - DirectEmployers/Jobsyn → `EMORY_SITES`
+3. Set `email_bucket` to `"regional"`, `"remote"`, or `"payer"`
+4. Set `remote_only: True` or `location_keywords: {...}` as needed
+
+**Decision framework:**
+- Payer/vendor org → `email_bucket: "payer"`, `remote_only: True`, comment out until activated
+- Health system in a target metro → `email_bucket: "regional"`, `location_keywords`
+- Health system outside target metros, remote-friendly → `email_bucket: "remote"`, `remote_only: True`
+- Spans both → two entries (one per bucket, same URL)
+
+---
+
+## Retention
+
+| File | Retention | Notes |
+|------|-----------|-------|
+| `scraper.log` | 14 days (auto-trimmed on startup) | gitignored; local only |
+| `seen_jobs.json` | 45 days per entry (auto-pruned) | committed to repo |
+| GitHub Actions run logs | 90 days (GitHub default) | full stdout captured per run |
 
 ---
 
 ## Troubleshooting
 
-### Authentication error (smtplib.SMTPAuthenticationError)
+**SMTPAuthenticationError** — regenerate the Gmail App Password; they can silently expire.
 
-- Confirm 2-Step Verification is enabled on the sending Gmail account
-- Regenerate the App Password — they can silently expire or be revoked
-- Paste the full 16-character password including the spaces into `.env` (or the repository secret)
-- Do not use your regular Gmail login password
+**No jobs / 0 results** — run locally and watch output. If `WARN — batch refresh suspected` appears, the portal reset all posting dates; the seen-jobs cache will handle deduplication on the next run.
 
-### No jobs found / zero emails sent
+**JSON-LD missing** — some ATS versions don't embed structured data on every detail page. Jobs are skipped and counted in the `skipped` total logged per site.
 
-- Run manually and watch the output. If 0 cards are found on the list page, the page selector may have changed
-- Try increasing the `wait_for_selector` timeout in `_get_job_links` if the site is slow
-- Check that the search URL is still valid by opening it in a browser
-
-### JSON-LD block missing on a detail page
-
-You'll see `No JSON-LD — skipping` in the output. This happens when:
-- The Phenom People platform didn't embed structured data for that specific posting
-- The page returned an error (404, redirect)
-
-These jobs are skipped automatically. If it happens for every job on a site, the ATS version may have changed — open a job detail page in Chrome DevTools and search the page source for `application/ld+json`.
+**New ATS / selectors changed** — run `inspect_selectors.py` with the portal URL to audit selectors and XHR patterns before editing the scraper.

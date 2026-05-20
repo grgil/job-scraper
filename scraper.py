@@ -19,6 +19,9 @@ if hasattr(sys.stdout, "reconfigure"):
 
 BASE_DIR = Path(__file__).parent
 LOG_FILE = BASE_DIR / "scraper.log"
+SEEN_JOBS_FILE = BASE_DIR / "seen_jobs.json"
+LOG_MAX_DAYS = 14
+SEEN_MAX_AGE_DAYS = 45
 load_dotenv(BASE_DIR / ".env")
 
 EMAIL_FROM = os.environ.get("EMAIL_FROM", "")
@@ -33,6 +36,7 @@ SITES = [
             "https://careers.vcuhealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
+        "email_bucket": "regional",
     },
     {
         "name": "UVA Health",
@@ -40,6 +44,7 @@ SITES = [
             "https://careers.uvahealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
+        "email_bucket": "regional",
     },
     {
         "name": "Duke Health (Lake Norman)",
@@ -49,6 +54,7 @@ SITES = [
         ),
         "location_keywords": {"lake norman", "mooresville"},
         "max_pages": 12,
+        "email_bucket": "regional",
     },
     {
         "name": "Duke Health (Remote)",
@@ -58,38 +64,36 @@ SITES = [
         ),
         "remote_only": True,
         "max_pages": 12,
+        "email_bucket": "remote",
     },
 ]
 
-# Workday ATS
-# remote_only=True: only include jobs whose JSON-LD location contains remote keywords
 WORKDAY_SITES = [
-    {"name": "Bon Secours",     "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "remote_only": False},
-    {"name": "MUSC",            "url": "https://musc.wd1.myworkdayjobs.com/MUSC",                               "remote_only": True, "max_pages": 12},
-    {"name": "OhioHealth",      "url": "https://ohiohealth.wd5.myworkdayjobs.com/OhioHealthJobs",               "remote_only": True, "max_pages": 12},
-    {"name": "Prisma Health (Greenville)", "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate", "location_keywords": {"greenville", "simpsonville", "easley", "patewood"}, "max_pages": 12},
-    {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate", "remote_only": True, "max_pages": 12},
-    {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",       "remote_only": True, "max_pages": 12},
-    {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                       "remote_only": True, "max_pages": 12},
-    {"name": "Cigna",           "url": "https://cigna.wd5.myworkdayjobs.com/cignacareers",                       "remote_only": True, "max_pages": 12},
-    # Nashville/Chattanooga hybrid — no filter; all jobs (remote + on-site) go to regional email
-    {"name": "VUMC",            "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers",                        "remote_only": False, "max_pages": 15},
-    # Roanoke/Richmond hybrid — no filter; all jobs (remote + on-site) go to regional email
-    {"name": "Carilion Clinic", "url": "https://carilionclinic.wd12.myworkdayjobs.com/External_Careers",        "remote_only": False, "max_pages": 12},
-    # Wellstar — Atlanta metro local + remote split
+    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "remote_only": False, "email_bucket": "regional"},
+    {"name": "Carilion Clinic",           "url": "https://carilionclinic.wd12.myworkdayjobs.com/External_Careers",         "remote_only": False, "max_pages": 12, "email_bucket": "regional"},
+    {"name": "Prisma Health (Greenville)","url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate",        "location_keywords": {"greenville", "simpsonville", "easley", "patewood"}, "max_pages": 12, "email_bucket": "regional"},
     {"name": "Wellstar Health (Atlanta)", "url": "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers",
-     "location_keywords": {"atlanta", "marietta", "smyrna", "kennesaw", "woodstock", "cartersville", "douglasville", "newnan", "austell", "acworth"}, "max_pages": 12},
-    {"name": "Wellstar Health (Remote)",  "url": "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers",      "remote_only": True, "max_pages": 12},
-    # Remote-only vendors / AMCs
-    {"name": "WVU Medicine",    "url": "https://wvumedicine.wd1.myworkdayjobs.com/UHA",                         "remote_only": True, "max_pages": 12},
-    {"name": "Solventum (3M HIS)", "url": "https://healthcare.wd1.myworkdayjobs.com/Search",                    "remote_only": True, "max_pages": 12},
-    {"name": "Veradigm",        "url": "https://veradigm.wd12.myworkdayjobs.com/VR",                            "remote_only": True, "max_pages": 6},
-    # Waystar — Atlanta + Louisville local + remote split
-    {"name": "Waystar (Atlanta / Louisville)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",
-     "location_keywords": {"atlanta", "louisville"}, "max_pages": 6},
-    {"name": "Waystar (Remote)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",                        "remote_only": True, "max_pages": 6},
-    # Centene — both wd5 tenant and jobs.centene.com custom portal blocked/timing out
-    # Atrium Health (aah.wd5) — held pending batch refresh fix
+     "location_keywords": {"atlanta", "marietta", "smyrna", "kennesaw", "woodstock", "cartersville", "douglasville", "newnan", "austell", "acworth"}, "max_pages": 12, "email_bucket": "regional"},
+    {"name": "Atrium Health",             "url": "https://aah.wd5.myworkdayjobs.com/External",
+     "location_keywords": {"charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
+                           "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson"},
+     "max_pages": 15, "max_results": 15, "email_bucket": "regional"},
+    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC",                               "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
+    {"name": "OhioHealth",                "url": "https://ohiohealth.wd5.myworkdayjobs.com/OhioHealthJobs",               "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
+    {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers",                        "remote_only": True, "max_pages": 15, "email_bucket": "remote"},
+    {"name": "WVU Medicine",              "url": "https://wvumedicine.wd1.myworkdayjobs.com/UHA",                         "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
+    {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate",       "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
+    {"name": "Wellstar Health (Remote)",  "url": "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers",                "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
+    # Payer / vendor — commented out; activate when payer digest is ready
+    # {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
+    # {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
+    # {"name": "Cigna",           "url": "https://cigna.wd5.myworkdayjobs.com/cignacareers",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
+    # {"name": "Solventum (3M HIS)", "url": "https://healthcare.wd1.myworkdayjobs.com/Search",               "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
+    # {"name": "Veradigm",        "url": "https://veradigm.wd12.myworkdayjobs.com/VR",                       "remote_only": True, "max_pages": 6,  "email_bucket": "payer"},
+    # {"name": "Waystar (Atlanta / Louisville)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",
+    #  "location_keywords": {"atlanta", "louisville"}, "max_pages": 6, "email_bucket": "payer"},
+    # {"name": "Waystar (Remote)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",                   "remote_only": True, "max_pages": 6,  "email_bucket": "payer"},
+    # Centene — wd5 tenant and jobs.centene.com both blocked/timing out
     # CorroHealth — Workday maintenance page, blocked
 ]
 
@@ -97,81 +101,78 @@ REMOTE_LOCATION_KEYWORDS = {"remote", "work at home", "work from home", "virtual
 
 # Title exclusion filter — applied at email-build time, not scrape time
 TITLE_EXCLUDE_PHRASES = {
-    # Nursing
     "registered nurse", "licensed practical", "licensed vocational",
     "nurse practitioner", "certified nursing assistant", "certified nurse anesthetist",
     "clinical nurse specialist", "nurse midwife", "travel nurse",
     "charge nurse", "staff nurse", "nursing supervisor", "nurse manager",
     "patient care tech", "patient care assistant", "nursing",
-    # Allied health
+    "nurse residency", "nurse case manager", "nurse supervisor",
+    "nurse mgr", "mgr, nurse", "lic practical",
     "physical therapist", "physical therapy assistant",
-    "occupational therapist", "occupational therapy assistant", "speech",
-    "speech language", "speech-language", "audiologist", "physiologist",
+    "occupational therapist", "occupational therapy assistant",
+    "speech", "speech language", "speech-language",
+    "social work", "social worker",
+    "audiologist", "audiology", "physiologist",
     "respiratory therapist", "respiratory therapy", "advanced practice",
-    # Imaging
-    "radiologic technolog", "radiology tech", "x-ray tech",
+    "athletic trainer", "rehab aide", "rehabilitation aide",
+    "ambulance attendant", "polysomnography",
+    "radiologic technolog", "radiology tech", "rad tech", "x-ray tech",
     "ultrasound tech", "sonographer", "mri tech", "ct tech",
     "nuclear medicine tech", "mammograph", "pathologist",
-    # Lab / procedural
-    "lab technician", "laboratory technician", "phlebotomist",
-    "histotechnologist", "cytotechnologist", "medical laboratory",
+    "lab technician", "laboratory technician", "medical laboratory", "med asst",
+    "phlebotomist", "histotechnologist", "cytotechnologist",
+    "neurodiagnostic", "specimen processing",
+    "ekg tech", "eeg tech", "cardiac tech", "echo tech", "dialysis tech",
     "surgical tech", "scrub tech", "sterile processing", "central sterile",
-    "ekg tech", "eeg tech", "cardiac tech", "echo tech",
-    "dialysis tech", "ophthalm", "optometr",
+    "ophthalm", "optometr",
     "dental assistant", "dental hygienist",
-    # Pharmacy (bedside)
-    "pharmacist", "pharmacy technician",
-    # Clinical support
+    "pharmacist", "pharmacy technician", "pharmacy tech",
     "medical assistant", "medical scribe",
     "patient transporter", "patient transport",
-    # Facilities / non-clinical
+    "care partner", "patient support assistant",
+    "emergency department tech", "ed tech",
+    "primary therapist",
     "housekeeper", "housekeeping", "environmental services",
-    "food service", "food and nutrition", "dietary aide",
-    "dietary tech", "dietary assistant",
+    "food service", "food and nutrition", "dietary aide", "dietary tech", "dietary assistant", "kitchen",
     "security officer", "security guard", "public safety officer",
     "chaplain", "pastoral care",
     "maintenance technician", "facilities technician",
     "valet", "groundskeeper", "supply chain",
-    # Front desk / scheduling
     "patient scheduler", "appointment scheduler",
-    "front desk", "receptionist", "welcome",
-    "parking assistant",
-    # Rad tech shorthand (not caught by "radiologic technolog" / "radiology tech")
-    "rad tech",
-    # Pharmacy tech shorthand (not caught by "pharmacy technician")
-    "pharmacy tech",
-    # Bedside support / CNA-adjacent
-    "care partner", "patient support assistant",
-    # Allied health / EMS
-    "athletic trainer", "ambulance attendant",
-    "rehab aide", "rehabilitation aide",
-    "polysomnography",
-    "audiology",
-    # Nursing roles not caught by "registered nurse" / "nurse manager"
-    "nurse residency", "nurse case manager",
-    "lic practical",        # "Lic Practical Nurse" abbreviation
-    "nurse supervisor",     # "nursing supervisor" was in list; "nurse supervisor" wasn't
-    "nurse mgr",            # forward abbreviation
-    "mgr, nurse",           # "Mgr, Nurse" reversed form seen in Emory listings
-    # Dietary variant
-    "kitchen",
-    # ED tech (not caught by "patient care tech")
-    "emergency department tech", "ed tech",
-    # Mental health therapist (direct patient care; not behavioral health admin/management)
-    "primary therapist",
-    # Lab / clinical tech shorthand (not caught by "lab technician")
-    "med asst",             # "Coord, Med Asst" and similar abbreviations
-    "neurodiagnostic",      # nerve conduction / neurodiagnostic tech roles
-    "specimen processing",  # lab specimen handling tech (distinct from sterile processing)
+    "front desk", "receptionist", "welcome", "parking assistant",
 }
-TITLE_EXCLUDE_WORDS = {"rn", "lpn", "lvn", "cna", "crna", "cns", "emt", "paramedic",
-                       "scribe", "app", "sales",
-                       "np",    # NP (nurse practitioner) — catches "NP/PA" and similar
-                       "acnp",  # Acute Care Nurse Practitioner credential
-                       }
+TITLE_EXCLUDE_WORDS = {
+    "rn", "lpn", "lvn", "cna", "crna", "cns", "emt", "paramedic",
+    "np", "acnp", "scribe", "app", "sales",
+}
+PAYER_EXCLUDE_WORDS = {"lead", "senior", "manager", "director", "principal"}
 
-# iCIMS ATS — URLs need verification (public vs employee portals)
-ICIMS_SITES: list[dict] = []
+# iCIMS ATS
+_ASCENSION_URL = "https://ascensionjobs1-ascension.icims.com/jobs/search"
+ICIMS_SITES: list[dict] = [
+    {
+        "name": "Ascension (Remote)",
+        "url": _ASCENSION_URL,
+        "remote_only": True,
+        "max_pages": 12,
+        "email_bucket": "remote",
+    },
+    {
+        "name": "Ascension (Regional)",
+        "url": _ASCENSION_URL,
+        "location_keywords": {
+            "richmond", "glen allen", "henrico", "chesterfield", "midlothian",
+            "mechanicsville", "short pump", "colonial heights",
+            "atlanta", "sandy springs", "roswell", "marietta", "smyrna", "kennesaw",
+            "alpharetta", "johns creek", "dunwoody", "peachtree city", "newnan", "decatur",
+            "charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
+            "mooresville", "kannapolis", "mint hill", "belmont",
+        },
+        "remote_only": False,
+        "max_pages": 12,
+        "email_bucket": "regional",
+    },
+]
 
 # Emory Healthcare — DirectEmployers/Jobsyn SPA (emory.jobs)
 # Scraper uses response interception; direct API fetch always returns 403.
@@ -186,10 +187,31 @@ EMORY_SITES = [
             "east point", "forest park",
         },
         "remote_only": False,
+        "email_bucket": "regional",
+    },
+    {
+        "name": "Emory Healthcare (Remote)",
+        "page_url": "https://emory.jobs/jobs/",
+        "remote_only": True,
+        "email_bucket": "remote",
     },
 ]
 
 TODAY = date.today() - timedelta(days=1)
+
+
+def _load_seen_jobs() -> set[str]:
+    if SEEN_JOBS_FILE.exists():
+        data = json.loads(SEEN_JOBS_FILE.read_text(encoding="utf-8"))
+        cutoff = (date.today() - timedelta(days=SEEN_MAX_AGE_DAYS)).isoformat()
+        return {url for url, first_seen in data.items() if first_seen >= cutoff}
+    return set()
+
+
+def _save_seen_jobs(seen: dict[str, str]) -> None:
+    cutoff = (date.today() - timedelta(days=SEEN_MAX_AGE_DAYS)).isoformat()
+    pruned = {url: ts for url, ts in seen.items() if ts >= cutoff}
+    SEEN_JOBS_FILE.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
 
 
 def _validate_env() -> None:
@@ -208,6 +230,15 @@ def _extract_location(json_ld: dict) -> str:
     address = loc.get("address", {})
     parts = [address.get("addressLocality", ""), address.get("addressRegion", "")]
     return ", ".join(p for p in parts if p)
+
+
+def _rotate_log() -> None:
+    if not LOG_FILE.exists():
+        return
+    cutoff = (date.today() - timedelta(days=LOG_MAX_DAYS)).strftime("%Y-%m-%d")
+    lines = LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+    kept = [l for l in lines if not l.startswith("[") or l[1:11] >= cutoff]
+    LOG_FILE.write_text("".join(kept), encoding="utf-8")
 
 
 def _log(message: str) -> None:
@@ -541,9 +572,11 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
         skipped = 0
         consecutive_empty = 0
         newest_seen: date | None = None
+        page_dates: list[date] = []
 
         while links:
             page_matches = 0
+            page_dates = []
             for i, job in enumerate(links, 1):
                 details = await _get_job_details(detail_page, job["url"])
 
@@ -553,6 +586,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     continue
 
                 dp = details["date_posted"]
+                page_dates.append(dp)
                 if newest_seen is None or dp > newest_seen:
                     newest_seen = dp
                 if dp == since_date:
@@ -574,6 +608,14 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     page_matches += 1
 
             freshness = _page_freshness(newest_seen)
+
+            # Batch refresh detection: all dates on page identical AND newer than since_date
+            # means Workday refreshed all datePosted to today — no results will qualify on
+            # today's run; tomorrow's run would flood without the max_results cap.
+            if page_dates and len(set(page_dates)) == 1 and page_dates[0] > since_date:
+                _log(f"  WARN — batch refresh suspected ({site['name']}): all dates = {page_dates[0]}, since_date = {since_date} — stopping")
+                break
+
             if page_matches == 0:
                 consecutive_empty += 1
                 _log(
@@ -595,6 +637,11 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
         else:
             _log("  No more pages")
 
+        max_results = site.get("max_results")
+        if max_results and len(results) > max_results:
+            _log(f"  WARN — {site['name']}: capping results {len(results)} → {max_results} (batch refresh likely)")
+            results = results[:max_results]
+
         return results, skipped, newest_seen
     finally:
         await search_page.close()
@@ -605,81 +652,125 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
 # iCIMS ATS
 # ---------------------------------------------------------------------------
 
-async def _get_icims_job_links(page, site: dict) -> list[dict]:
+_ICIMS_JOB_LINK_JS = r"""() => {
+    const seen = new Set();
+    const results = [];
+
+    // Newer iCIMS portals (e.g. Ascension) use iCIMS_JobCardItem with date + location in listing
+    document.querySelectorAll('.iCIMS_JobCardItem').forEach(card => {
+        const link = card.querySelector('a[href*="/jobs/"]');
+        if (!link || !/\/jobs\/\d+/.test(link.href)) return;
+        if (seen.has(link.href)) return;
+        seen.add(link.href);
+        const title = (link.innerText || link.textContent || '').trim()
+            .replace(/^Job Posting Title\s*/i, '').trim();
+        if (title.length <= 3) return;
+
+        const cardText = card.innerText || '';
+        // Date: "(M/D/YYYY H:MM AM/PM)" — extract M/D/YYYY part
+        const dm = cardText.match(/\((\d{1,2}\/\d{1,2}\/\d{4})\s/);
+        const dateStr = dm ? dm[1] : null;
+
+        // Location: "Job Locations\nUS-STATE-City[optional more]"
+        let location = '';
+        const lm = cardText.match(/Job Locations\s+([\s\S]+?)(?:\n\nPosted|\nPosted|$)/);
+        if (lm) {
+            const firstLoc = lm[1].trim().split('\n')[0].trim();  // first location only
+            const parts = firstLoc.split('-').slice(1);            // drop leading "US"
+            if (parts.length >= 2) {
+                const state = parts[0];
+                const city = parts.slice(1).join(' ');
+                location = city + ', ' + state;
+            } else {
+                location = firstLoc;
+            }
+        }
+        results.push({ title, url: link.href, dateStr, location });
+    });
+    if (results.length > 0) return results;
+
+    // Older iCIMS portals — plain link extraction, date comes from detail page JSON-LD
+    document.querySelectorAll('a[href*="/jobs/"]').forEach(a => {
+        if (!/\/jobs\/\d+/.test(a.href)) return;
+        if (seen.has(a.href)) return;
+        seen.add(a.href);
+        const title = (a.innerText || a.textContent || '').trim()
+            .replace(/^Job Posting Title\s*/i, '').trim();
+        if (title.length > 3) results.push({ title, url: a.href, dateStr: null, location: '' });
+    });
+    return results;
+}"""
+
+# iCIMS_JobsTable = older portal version; iCIMS_ListingsPage = newer version (e.g. Ascension)
+_ICIMS_TABLE_SEL = (
+    'div.iCIMS_JobsTable, div[class*="iCIMS_Jobs"], '
+    'div.iCIMS_ListingsPage, [id*="icims-jobs"]'
+)
+
+
+async def _icims_content_frame(page):
+    """Return the frame that holds iCIMS job listings — main frame or first child frame."""
+    # Quick check: main frame already has the table (most iCIMS portals)
+    try:
+        await page.wait_for_selector(_ICIMS_TABLE_SEL, timeout=5_000)
+        return page
+    except PlaywrightTimeoutError:
+        pass
+    # Some portals (e.g. Ascension) render content inside a child iframe.
+    # Wait for an iframe to appear in the DOM first, then probe its content.
+    try:
+        await page.wait_for_selector("iframe", timeout=20_000)
+    except PlaywrightTimeoutError:
+        return None
+    for frame in page.frames[1:]:
+        try:
+            await frame.wait_for_selector(_ICIMS_TABLE_SEL, timeout=25_000)
+            return frame
+        except PlaywrightTimeoutError:
+            continue
+    return None
+
+
+async def _get_icims_job_links(page, site: dict) -> tuple[list[dict], object]:
     sep = "&" if "?" in site["url"] else "?"
     url = site["url"] + sep + "ss=1&sortby=date&in_jsch=1"
     _log(f"  Loading {url}")
     await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-    try:
-        await page.wait_for_selector(
-            'div.iCIMS_JobsTable, div[class*="iCIMS_Jobs"], [id*="icims-jobs"]',
-            timeout=30_000,
-        )
-    except PlaywrightTimeoutError:
+    frame = await _icims_content_frame(page)
+    if frame is None:
         _log(
-            f"  {site['name']}: WARN — iCIMS job table not found"
+            f"  {site['name']}: WARN — iCIMS job table not found in any frame"
             " (selectors: .iCIMS_JobsTable, [class*=iCIMS_Jobs])"
         )
-        return []
-    return await page.evaluate("""() => {
-        const seen = new Set();
-        const results = [];
-        document.querySelectorAll([
-            '.iCIMS_JobsTable a[href*="/jobs/"]',
-            '[class*="iCIMS_Jobs"] a[href*="/jobs/"]',
-            'a[href*="/jobs/"][class*="iCIMS"]',
-        ].join(', ')).forEach(a => {
-            if (seen.has(a.href)) return;
-            seen.add(a.href);
-            const title = (a.innerText || a.textContent || '').trim();
-            if (title.length > 3) results.push({ title, url: a.href });
-        });
-        return results;
-    }""")
+        return [], None
+    return await frame.evaluate(_ICIMS_JOB_LINK_JS), frame
 
 
-async def _get_icims_next_page(page) -> list[dict]:
-    next_link = page.locator('a[title="Next Page"], a[aria-label="Next"]').last
+async def _get_icims_next_page(frame) -> list[dict]:
+    next_link = frame.locator('a[title="Next Page"], a[aria-label="Next"]').last
+    if not await next_link.is_visible():
+        next_link = frame.locator('a.glyph').filter(has_text=re.compile(r'next', re.IGNORECASE)).last
     if not await next_link.is_visible():
         return []
-    first_href = await page.evaluate(
-        """() => (document.querySelector(
-            '.iCIMS_JobsTable a[href*="/jobs/"], [class*="iCIMS_Jobs"] a[href*="/jobs/"]'
-        ) || {}).href || ''"""
+    first_href = await frame.evaluate(
+        r"""() => ([...document.querySelectorAll('a[href*="/jobs/"]')]
+            .find(a => /\/jobs\/\d+/.test(a.href)) || {}).href || ''"""
     )
     await next_link.click()
     try:
-        await page.wait_for_function(
+        await frame.wait_for_function(
             f"""() => {{
-                const a = document.querySelector(
-                    '.iCIMS_JobsTable a[href*="/jobs/"], [class*="iCIMS_Jobs"] a[href*="/jobs/"]'
-                );
-                return a && a.href !== {repr(first_href)};
+                const links = [...document.querySelectorAll('a[href*="/jobs/"]')]
+                    .filter(a => /\\/jobs\\/\\d+/.test(a.href));
+                return links.length > 0 && links[0].href !== {repr(first_href)};
             }}""",
             timeout=20_000,
         )
-        await page.wait_for_selector(
-            'div.iCIMS_JobsTable, div[class*="iCIMS_Jobs"]',
-            timeout=15_000,
-        )
+        await frame.wait_for_selector(_ICIMS_TABLE_SEL, timeout=15_000)
     except PlaywrightTimeoutError:
         _log("  WARN — iCIMS next page did not load new content")
         return []
-    return await page.evaluate("""() => {
-        const seen = new Set();
-        const results = [];
-        document.querySelectorAll([
-            '.iCIMS_JobsTable a[href*="/jobs/"]',
-            '[class*="iCIMS_Jobs"] a[href*="/jobs/"]',
-            'a[href*="/jobs/"][class*="iCIMS"]',
-        ].join(', ')).forEach(a => {
-            if (seen.has(a.href)) return;
-            seen.add(a.href);
-            const title = (a.innerText || a.textContent || '').trim();
-            if (title.length > 3) results.push({ title, url: a.href });
-        });
-        return results;
-    }""")
+    return await frame.evaluate(_ICIMS_JOB_LINK_JS)
 
 
 async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
@@ -687,7 +778,9 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
     search_page = await browser.new_page()
     detail_page = await browser.new_page()
     try:
-        links = await _get_icims_job_links(search_page, site)
+        links, icims_frame = await _get_icims_job_links(search_page, site)
+        if icims_frame is None:
+            return [], 0, None
         page_num = 1
         _log(f"  {len(links)} job(s) on page {page_num}")
 
@@ -695,23 +788,69 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
         skipped = 0
         consecutive_empty = 0
         newest_seen: date | None = None
+        remote_only = site.get("remote_only", False)
+        location_keywords = site.get("location_keywords")
+        max_pages = site.get("max_pages")
+
+        # True if the first page returned card-embedded dates (newer iCIMS like Ascension)
+        has_card_dates = links and links[0].get("dateStr") is not None
 
         while links:
             page_matches = 0
             for i, job in enumerate(links, 1):
-                details = await _get_job_details(detail_page, job["url"])
-
-                if details is None:
-                    _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
+                if _is_excluded_title(job["title"]):
                     skipped += 1
                     continue
 
-                dp = details["date_posted"]
+                # Newer iCIMS portals embed date + location in the listing card
+                if has_card_dates:
+                    raw_date_str = job.get("dateStr") or ""
+                    location = job.get("location", "")
+                    if not raw_date_str:
+                        skipped += 1
+                        continue
+                    try:
+                        dp = datetime.strptime(raw_date_str, "%m/%d/%Y").date()
+                    except ValueError:
+                        skipped += 1
+                        continue
+                    employment_type = ""
+                    occupational_category = ""
+                    work_hours = ""
+                else:
+                    details = await _get_job_details(detail_page, job["url"])
+                    if details is None:
+                        _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
+                        skipped += 1
+                        continue
+                    dp = details["date_posted"]
+                    location = details["location"]
+                    employment_type = details.get("employment_type", "")
+                    occupational_category = details.get("occupational_category", "")
+                    work_hours = details.get("work_hours", "")
+
                 if newest_seen is None or dp > newest_seen:
                     newest_seen = dp
                 if dp == since_date:
-                    results.append({**job, **details})
-                    _log(f"  [p{page_num}/{i}] MATCH {dp}   — {job['title'][:60]}")
+                    loc_lower = location.lower()
+                    is_remote = any(kw in loc_lower for kw in REMOTE_LOCATION_KEYWORDS)
+                    if remote_only:
+                        qualifies = is_remote
+                    elif location_keywords:
+                        qualifies = any(kw in loc_lower for kw in location_keywords)
+                    else:
+                        qualifies = True
+                    if qualifies:
+                        results.append({
+                            "title": job["title"], "url": job["url"],
+                            "date_posted": dp, "location": location,
+                            "employment_type": employment_type,
+                            "occupational_category": occupational_category,
+                            "work_hours": work_hours,
+                        })
+                        _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {job['title'][:60]}")
+                    else:
+                        _log(f"  [p{page_num}/{i}] SKIP  {dp} ({location}) — {job['title'][:60]}")
                 if dp >= since_date:
                     page_matches += 1
 
@@ -729,7 +868,10 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
                 consecutive_empty = 0
 
             page_num += 1
-            links = await _get_icims_next_page(search_page)
+            if max_pages and page_num > max_pages:
+                _log(f"  Page limit ({max_pages}) reached — stopping")
+                break
+            links = await _get_icims_next_page(icims_frame)
         else:
             _log("  No more pages")
 
@@ -830,8 +972,13 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                 job_url = f"https://emory.jobs/jobs/{title_slug}/{guid}/"
                 location = loc_exact or (f"{city}, {state}" if city and state else city or state)
                 loc_str = location.lower()
+                is_remote = any(k in loc_str for k in REMOTE_LOCATION_KEYWORDS)
 
-                if loc_kw and not any(k in loc_str for k in loc_kw):
+                if site.get("remote_only"):
+                    if not is_remote:
+                        _log(f"  SKIP  {dp} ({location}) — {raw_title[:60]}")
+                        continue
+                elif loc_kw and not any(k in loc_str for k in loc_kw):
                     _log(f"  SKIP  {dp} ({location}) — {raw_title[:60]}")
                     continue
 
@@ -889,11 +1036,12 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
 # Title exclusion filter
 # ---------------------------------------------------------------------------
 
-def _is_excluded_title(title: str) -> bool:
+def _is_excluded_title(title: str, extra_words: frozenset[str] = frozenset()) -> bool:
     t = title.lower()
     if any(phrase in t for phrase in TITLE_EXCLUDE_PHRASES):
         return True
-    return any(re.search(rf'\b{re.escape(word)}\b', t) for word in TITLE_EXCLUDE_WORDS)
+    words = TITLE_EXCLUDE_WORDS | extra_words
+    return any(re.search(rf'\b{re.escape(w)}\b', t) for w in words)
 
 
 # ---------------------------------------------------------------------------
@@ -908,8 +1056,8 @@ def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: d
     return newest_seen < since_date - timedelta(days=2)
 
 
-def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_warning: bool = False, newest_seen: date | None = None) -> str:
-    shown_jobs = [j for j in jobs if not _is_excluded_title(j["title"])]
+def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_warning: bool = False, newest_seen: date | None = None, extra_words: frozenset[str] = frozenset()) -> str:
+    shown_jobs = [j for j in jobs if not _is_excluded_title(j["title"], extra_words)]
     filtered = len(jobs) - len(shown_jobs)
     count = len(shown_jobs)
     job_items_html = []
@@ -953,11 +1101,11 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
     )
 
 
-def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date) -> str:
-    total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"]))
+def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date, extra_words: frozenset[str] = frozenset()) -> str:
+    total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
     date_str = today.strftime('%b %d, %Y')
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
-        _build_site_section(site_name, jobs, skipped, sort_warning, newest_seen)
+        _build_site_section(site_name, jobs, skipped, sort_warning, newest_seen, extra_words)
         for site_name, jobs, skipped, sort_warning, newest_seen in results
         if jobs or skipped or sort_warning
     )
@@ -973,11 +1121,11 @@ def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None
 </html>"""
 
 
-def send_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date, label: str = "") -> None:
-    total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"]))
+def send_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date, label: str = "", extra_words: frozenset[str] = frozenset()) -> None:
+    total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
     tag = f" [{label}]" if label else ""
     subject = f"[Job Alert{tag}] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
-    html = build_html_email(results, today)
+    html = build_html_email(results, today, extra_words)
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -1014,14 +1162,15 @@ async def _run_site(
             if sort_warning:
                 _log(f"  {site['name']}: sort still collapsed after retry — flagging in email")
             _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped} skipped — {_page_freshness(newest_seen)}")
-            return (site["name"], jobs, skipped, sort_warning, newest_seen, site.get("remote_only", False))
+            return (site["name"], jobs, skipped, sort_warning, newest_seen, site.get("email_bucket", "regional"))
         except Exception as e:
             _log(f"  {site['name']}: ERROR — {e}")
-            return (site["name"], [], 0, False, None, site.get("remote_only", False))
+            return (site["name"], [], 0, False, None, site.get("email_bucket", "regional"))
 
 
 async def main() -> None:
     _validate_env()
+    _rotate_log()
     _log(f"Run started (since={TODAY})")
 
     try:
@@ -1029,6 +1178,7 @@ async def main() -> None:
             _log("Launching browser ...")
             browser = await pw.chromium.launch(headless=True)
             _log("Browser ready")
+            seen_record: dict[str, str] = {}
             try:
                 sem = asyncio.Semaphore(3)
                 # Heaviest sites first (LPT heuristic): filtered/remote Workday sites
@@ -1044,14 +1194,45 @@ async def main() -> None:
                 tasks = [_run_site(sem, fn, browser, site, TODAY) for fn, site in ordered]
                 results = list(await asyncio.gather(*tasks))
 
-                local_results  = [(n, j, sk, sw, ns) for n, j, sk, sw, ns, ro in results if not ro]
-                remote_results = [(n, j, sk, sw, ns) for n, j, sk, sw, ns, ro in results if ro]
+                seen_urls = _load_seen_jobs()
+                seen_record: dict[str, str] = (
+                    json.loads(SEEN_JOBS_FILE.read_text(encoding="utf-8"))
+                    if SEEN_JOBS_FILE.exists() else {}
+                )
+                today_str = date.today().isoformat()
 
-                if any(j or sk or sw for _, j, sk, sw, _ in local_results):
-                    send_email(local_results, TODAY, label="Richmond/Regional")
-                if any(j or sk or sw for _, j, sk, sw, _ in remote_results):
+                def _dedup(bucket_results):
+                    deduped = []
+                    for name, jobs, skipped, sort_warn, newest in bucket_results:
+                        fresh = []
+                        for j in jobs:
+                            url = j.get("url", "")
+                            if url in seen_urls:
+                                _log(f"  SEEN — skipping {j.get('title','')[:60]}")
+                            else:
+                                fresh.append(j)
+                                seen_record[url] = today_str
+                        deduped.append((name, fresh, skipped, sort_warn, newest))
+                    return deduped
+
+                regional_results = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "regional"])
+                remote_results   = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "remote"])
+                payer_results    = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "payer"])
+
+                def _has_content(bucket_results, extra_words=frozenset()):
+                    visible = sum(1 for _, jobs, _, _, _ in bucket_results
+                                  for j in jobs if not _is_excluded_title(j["title"], extra_words))
+                    return visible > 0 or any(sk or sw for _, _, sk, sw, _ in bucket_results)
+
+                if _has_content(regional_results):
+                    send_email(regional_results, TODAY, label="Regional")
+                if _has_content(remote_results):
                     send_email(remote_results, TODAY, label="Remote")
+                if _has_content(payer_results, frozenset(PAYER_EXCLUDE_WORDS)):
+                    send_email(payer_results, TODAY, label="Payer", extra_words=frozenset(PAYER_EXCLUDE_WORDS))
+
             finally:
+                _save_seen_jobs(seen_record)
                 await browser.close()
     except Exception as e:
         _log(f"ERROR: {e}")

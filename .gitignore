@@ -2,11 +2,3 @@
 scraper.log
 __pycache__/
 *.pyc
-threshold_test.py
-diagnostic.py
-diagnostic.log
-run_diagnostic.bat
-scraper_v1.py
-scraper_v2.py
-scraper_v2.log
-inspect_selectors.py
