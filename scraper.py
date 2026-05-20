@@ -74,10 +74,12 @@ WORKDAY_SITES = [
     {"name": "Prisma Health (Greenville)","url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate",        "location_keywords": {"greenville", "simpsonville", "easley", "patewood"}, "max_pages": 12, "email_bucket": "regional"},
     {"name": "Wellstar Health (Atlanta)", "url": "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers",
      "location_keywords": {"atlanta", "marietta", "smyrna", "kennesaw", "woodstock", "cartersville", "douglasville", "newnan", "austell", "acworth"}, "max_pages": 12, "email_bucket": "regional"},
-    {"name": "Atrium Health",             "url": "https://aah.wd5.myworkdayjobs.com/External",
+    {"name": "Atrium Health (Charlotte)",  "url": "https://aah.wd5.myworkdayjobs.com/External",
      "location_keywords": {"charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
                            "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson"},
      "max_pages": 15, "max_results": 15, "email_bucket": "regional"},
+    {"name": "Atrium Health (Remote)",    "url": "https://aah.wd5.myworkdayjobs.com/External",
+     "remote_only": True, "max_pages": 12, "max_results": 15, "email_bucket": "remote"},
     {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC",                               "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
     {"name": "OhioHealth",                "url": "https://ohiohealth.wd5.myworkdayjobs.com/OhioHealthJobs",               "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
     {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers",                        "remote_only": True, "max_pages": 15, "email_bucket": "remote"},
@@ -149,6 +151,7 @@ PAYER_EXCLUDE_WORDS = {"lead", "senior", "manager", "director", "principal"}
 
 # iCIMS ATS
 _ASCENSION_URL = "https://ascensionjobs1-ascension.icims.com/jobs/search"
+_NOVANT_URL    = "https://easyapply-novanthealth.icims.com/jobs/search"
 ICIMS_SITES: list[dict] = [
     {
         "name": "Ascension (Remote)",
@@ -171,6 +174,24 @@ ICIMS_SITES: list[dict] = [
         "remote_only": False,
         "max_pages": 12,
         "email_bucket": "regional",
+    },
+    {
+        "name": "Novant Health (Charlotte)",
+        "url": _NOVANT_URL,
+        "location_keywords": {
+            "charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
+            "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson",
+        },
+        "remote_only": False,
+        "max_pages": 12,
+        "email_bucket": "regional",
+    },
+    {
+        "name": "Novant Health (Remote)",
+        "url": _NOVANT_URL,
+        "remote_only": True,
+        "max_pages": 12,
+        "email_bucket": "remote",
     },
 ]
 
