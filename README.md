@@ -1,6 +1,6 @@
 # Health Job Scraper
 
-Daily job alert scraper covering 19 health system and payer portals across Workday, Phenom, iCIMS, and DirectEmployers (Jobsyn) ATS platforms. Uses Playwright (headless Chromium) for JavaScript-rendered pages. Runs automatically via GitHub Actions and sends targeted email digests by market.
+Daily job alert scraper covering 14 health system portals across Workday, Phenom, iCIMS, and DirectEmployers (Jobsyn) ATS platforms. Uses Playwright (headless Chromium) for JavaScript-rendered pages. Runs automatically via GitHub Actions and sends targeted email digests by market.
 
 ---
 
@@ -8,8 +8,8 @@ Daily job alert scraper covering 19 health system and payer portals across Workd
 
 | Digest | Orgs |
 |--------|------|
-| **Regional** | VCU Health, UVA Health, Bon Secours, Carilion Clinic, Duke (Lake Norman), Atrium Health, Emory (Atlanta), Prisma Health (Greenville), Wellstar (Atlanta), Ascension (Regional) |
-| **Remote** | MUSC, Duke, VUMC, WVU Medicine, OhioHealth, Emory (Remote), Prisma Health (Remote), Wellstar (Remote), Ascension (Remote) |
+| **Regional** | VCU Health, UVA Health, Bon Secours, Carilion Clinic, Prisma Health (Greenville), Wellstar (Atlanta), Atrium Health (Charlotte), Emory Healthcare (Atlanta) |
+| **Remote** | Duke Health, MUSC, VUMC, Prisma Health, Emory Healthcare, Ascension |
 | **Payer** | Humana, Elevance, Cigna, Solventum, Veradigm, Waystar *(commented out — activate when ready)* |
 
 ---
@@ -87,6 +87,17 @@ The workflow at `.github/workflows/scraper.yml` runs at **6:00 AM UTC** (2 AM ED
 | `scraper.log` | 14 days (auto-trimmed on startup) | gitignored; local only |
 | `seen_jobs.json` | 45 days per entry (auto-pruned) | committed to repo |
 | GitHub Actions run logs | 90 days (GitHub default) | full stdout captured per run |
+
+---
+
+## Performance report
+
+```
+python perf_report.py            # most recent run
+python perf_report.py --run 2    # second-most-recent run
+```
+
+Prints a per-site table: elapsed seconds, qualifying count, skipped count, freshness. Requires at least one run after the timing instrumentation was added (May 2026).
 
 ---
 

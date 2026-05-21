@@ -5,10 +5,13 @@ import re
 import smtplib
 import ssl
 import sys
+import time
 from datetime import date, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
@@ -28,32 +31,23 @@ EMAIL_FROM = os.environ.get("EMAIL_FROM", "")
 EMAIL_TO = os.environ.get("EMAIL_TO", "")
 EMAIL_APP_PASS = os.environ.get("EMAIL_APP_PASS", "")
 
-# Phenom People ATS
+# Phenom People ATS — ordered by expected elapsed (UVA first: serial detail fetches, up to 20 pages)
 SITES = [
-    {
-        "name": "VCU Health",
-        "url": (
-            "https://careers.vcuhealth.org/us/en/search-results"
-            "?sortBy=postingdate&descending=true"
-        ),
-        "email_bucket": "regional",
-    },
     {
         "name": "UVA Health",
         "url": (
             "https://careers.uvahealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
+        "max_pages": 20,
         "email_bucket": "regional",
     },
     {
-        "name": "Duke Health (Lake Norman)",
+        "name": "VCU Health",
         "url": (
-            "https://careers.dukehealth.org/us/en/search-results"
+            "https://careers.vcuhealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
-        "location_keywords": {"lake norman", "mooresville"},
-        "max_pages": 12,
         "email_bucket": "regional",
     },
     {
@@ -71,21 +65,72 @@ SITES = [
 WORKDAY_SITES = [
     {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "remote_only": False, "email_bucket": "regional"},
     {"name": "Carilion Clinic",           "url": "https://carilionclinic.wd12.myworkdayjobs.com/External_Careers",         "remote_only": False, "max_pages": 12, "email_bucket": "regional"},
-    {"name": "Prisma Health (Greenville)","url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate",        "location_keywords": {"greenville", "simpsonville", "easley", "patewood"}, "max_pages": 12, "email_bucket": "regional"},
-    {"name": "Wellstar Health (Atlanta)", "url": "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers",
-     "location_keywords": {"atlanta", "marietta", "smyrna", "kennesaw", "woodstock", "cartersville", "douglasville", "newnan", "austell", "acworth"}, "max_pages": 12, "email_bucket": "regional"},
-    {"name": "Atrium Health (Charlotte)",  "url": "https://aah.wd5.myworkdayjobs.com/External",
+    {"name": "Prisma Health (Greenville)",
+     "url": (
+         "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate"
+         "?primaryLocation=e318c8ece20410011031feb5b1700000"
+         "&primaryLocation=e37e7eee17f201fd2dbe770fa3025b68"
+         "&primaryLocation=e37e7eee17f201efc35d3922a30296cf"
+         "&primaryLocation=e37e7eee17f201877094131ca302bead"
+         "&primaryLocation=e37e7eee17f2017c97cc2920a30210c4"
+         "&primaryLocation=e37e7eee17f201bf0a16a018a302b89a"
+         "&primaryLocation=e37e7eee17f2015e77434a20a302cac4"
+         "&primaryLocation=e37e7eee17f20180a9a8df15a302838b"
+         "&primaryLocation=e37e7eee17f201be7d783517a302d792"
+         "&primaryLocation=42bc1918b2651001b5fd4cd4d56e0000"
+         "&primaryLocation=e37e7eee17f2010423e8b218a302299b"
+         "&primaryLocation=e37e7eee17f2016294c6d71fa30274c2"
+     ),
+     "location_keywords": {"greenville", "simpsonville", "easley", "greer", "travelers rest", "powdersville", "laurens"},
+     "max_pages": 8, "email_bucket": "regional"},
+    {"name": "Wellstar Health (Atlanta)",
+     "url": (
+         "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers"
+         "?locations=ed12bf55a64c102860663cc682a90000"
+         "&locations=ed12bf55a64c10286060c90d07510000"
+         "&locations=ed12bf55a64c10286066440c69520000"
+         "&locations=ed12bf55a64c102860662661db030000"
+         "&locations=ed12bf55a64c102860664c88ced20000"
+         "&locations=ed12bf55a64c1028606634e7ed5e0000"
+         "&locations=ed12bf55a64c102860da168d7df60000"
+     ),
+     "location_keywords": {"atlanta", "marietta", "smyrna", "kennesaw", "woodstock", "cartersville", "douglasville", "newnan", "austell", "acworth"},
+     "max_pages": 8, "email_bucket": "regional"},
+    {"name": "Atrium Health (Charlotte)",
+     "url": (
+         "https://aah.wd5.myworkdayjobs.com/External"
+         "?locationRegionStateProvince=1486a0a4a8464c3b9ec482d4038deb99"
+         "&locations=3da15923432b1012827a63e412ea0000"
+         "&locations=958ab7fbc39a10128274bc9f42850000"
+         "&locations=f60d2e9a642610128276987733930000"
+         "&locations=20d78ee849f2101282726ccf36990000"
+         "&locations=fce93e421e8b1001105ac6ccab410000"
+         "&locations=9d01e0c50b551012826bcddb3e8e0000"
+         "&locations=9588b884a5fc1012826ce70f13ea0000"
+         "&locations=447dae7df7bc1012826d570d6fec0000"
+         "&locations=b4a5f3cd97131012826bb184060b0000"
+         "&locations=958ab7fbc39a101282769f3ba3660000"
+         "&locations=958ab7fbc39a10128275fe57bb570000"
+         "&locations=3da15923432b10128278e0d1f9170000"
+         "&locations=6dcfb27e577c10128275c50970c90000"
+         "&locations=447dae7df7bc10128278d2b781d40000"
+         "&locations=6af6cfb37edc101282775b559c8a0000"
+         "&locations=f60d2e9a64261012826d3c135e980000"
+         "&locations=9d01e0c50b551012826ddcfbc8b00000"
+         "&locations=20d78ee849f21012826cf53a58290000"
+         "&locations=47b1707d32ff1016deeba49fdc380000"
+         "&locations=b4a5f3cd97131012827da4294ec00000"
+         "&locations=47b1707d32ff1016deeb946e28cd0000"
+         "&locations=958ab7fbc39a10128278783cd90e0000"
+         "&locations=b4a5f3cd97131012828361b991b90000"
+         "&locations=43dd0d7469391012828428e9f7d60000"
+     ),
      "location_keywords": {"charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
                            "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson"},
-     "max_pages": 15, "max_results": 15, "email_bucket": "regional"},
-    {"name": "Atrium Health (Remote)",    "url": "https://aah.wd5.myworkdayjobs.com/External",
-     "remote_only": True, "max_pages": 12, "max_results": 15, "email_bucket": "remote"},
-    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC",                               "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
-    {"name": "OhioHealth",                "url": "https://ohiohealth.wd5.myworkdayjobs.com/OhioHealthJobs",               "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
-    {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers",                        "remote_only": True, "max_pages": 15, "email_bucket": "remote"},
-    {"name": "WVU Medicine",              "url": "https://wvumedicine.wd1.myworkdayjobs.com/UHA",                         "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
+     "max_pages": 8, "max_results": 15, "email_bucket": "regional"},
+    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": True, "max_pages": 6, "email_bucket": "remote"},
+    {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers?remoteType=bdea8b359c5810280e51f98b08180000&remoteType=bdea8b359c5810280e51f98b08180001", "remote_only": True, "max_pages": 8, "email_bucket": "remote"},
     {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate",       "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
-    {"name": "Wellstar Health (Remote)",  "url": "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers",                "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
     # Payer / vendor — commented out; activate when payer digest is ready
     # {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
     # {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
@@ -150,54 +195,18 @@ TITLE_EXCLUDE_WORDS = {
 PAYER_EXCLUDE_WORDS = {"lead", "senior", "manager", "director", "principal"}
 
 # iCIMS ATS
-_ASCENSION_URL = "https://ascensionjobs1-ascension.icims.com/jobs/search"
-_NOVANT_URL    = "https://easyapply-novanthealth.icims.com/jobs/search"
 ICIMS_SITES: list[dict] = [
     {
         "name": "Ascension (Remote)",
-        "url": _ASCENSION_URL,
+        "url": "https://ascensionjobs1-ascension.icims.com/jobs/search?ss=1&searchRelation=keyword_all&searchLocation=--Remote",
         "remote_only": True,
-        "max_pages": 12,
-        "email_bucket": "remote",
-    },
-    {
-        "name": "Ascension (Regional)",
-        "url": _ASCENSION_URL,
-        "location_keywords": {
-            "richmond", "glen allen", "henrico", "chesterfield", "midlothian",
-            "mechanicsville", "short pump", "colonial heights",
-            "atlanta", "sandy springs", "roswell", "marietta", "smyrna", "kennesaw",
-            "alpharetta", "johns creek", "dunwoody", "peachtree city", "newnan", "decatur",
-            "charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
-            "mooresville", "kannapolis", "mint hill", "belmont",
-        },
-        "remote_only": False,
-        "max_pages": 12,
-        "email_bucket": "regional",
-    },
-    {
-        "name": "Novant Health (Charlotte)",
-        "url": _NOVANT_URL,
-        "location_keywords": {
-            "charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
-            "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson",
-        },
-        "remote_only": False,
-        "max_pages": 12,
-        "email_bucket": "regional",
-    },
-    {
-        "name": "Novant Health (Remote)",
-        "url": _NOVANT_URL,
-        "remote_only": True,
-        "max_pages": 12,
+        "max_pages": 6,
         "email_bucket": "remote",
     },
 ]
 
 # Emory Healthcare — DirectEmployers/Jobsyn SPA (emory.jobs)
 # Scraper uses response interception; direct API fetch always returns 403.
-# max_pages kept at 20 during verification; remove cap once confirmed reliable.
 EMORY_SITES = [
     {
         "name": "Emory Healthcare (Atlanta)",
@@ -876,7 +885,7 @@ _ICIMS_TABLE_SEL = (
 )
 
 
-async def _icims_content_frame(page):
+async def _icims_content_frame(page, site_hostname: str = ""):
     """Return the frame that holds iCIMS job listings — main frame or first child frame."""
     # Quick check: main frame already has the table (most iCIMS portals)
     try:
@@ -884,7 +893,7 @@ async def _icims_content_frame(page):
         return page
     except PlaywrightTimeoutError:
         pass
-    # Some portals (e.g. Ascension) render content inside a child iframe.
+    # Some portals (e.g. Ascension, Novant) render content inside a child iframe.
     # Wait for an iframe to appear in the DOM first, then probe its content.
     try:
         await page.wait_for_selector("iframe", timeout=20_000)
@@ -896,6 +905,18 @@ async def _icims_content_frame(page):
             return frame
         except PlaywrightTimeoutError:
             continue
+    # Fallback: find a child frame that shares the site's hostname (e.g. easyapply-org.icims.com).
+    # Uses netloc comparison — NOT substring match — to avoid matching LivePerson frames that
+    # embed the site hostname as a URL-encoded query parameter (?loc=https://easyapply-...).
+    if site_hostname:
+        await page.wait_for_timeout(3_000)
+        for frame in page.frames[1:]:
+            try:
+                if urlparse(frame.url).netloc == site_hostname:
+                    await frame.wait_for_load_state("domcontentloaded", timeout=15_000)
+                    return frame
+            except (PlaywrightTimeoutError, Exception):
+                pass
     return None
 
 
@@ -904,13 +925,20 @@ async def _get_icims_job_links(page, site: dict) -> tuple[list[dict], object]:
     url = site["url"] + sep + "ss=1&sortby=date&in_jsch=1"
     _log(f"  Loading {url}")
     await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-    frame = await _icims_content_frame(page)
+    site_hostname = urlparse(site["url"]).netloc
+    frame = await _icims_content_frame(page, site_hostname)
     if frame is None:
         _log(
             f"  {site['name']}: WARN — iCIMS job table not found in any frame"
             " (selectors: .iCIMS_JobsTable, [class*=iCIMS_Jobs])"
         )
         return [], None
+    _log(f"  Frame: {frame.url[:80]}")
+    # Job cards render via XHR after the frame's domcontentloaded — wait for links.
+    try:
+        await frame.wait_for_selector('a[href*="/jobs/"]', timeout=20_000)
+    except PlaywrightTimeoutError:
+        _log(f"  {site['name']}: WARN — no job links appeared in frame after 20s")
     return await frame.evaluate(_ICIMS_JOB_LINK_JS), frame
 
 
@@ -1249,7 +1277,7 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
         '<p style="color:#aaa;font-size:13px;">No new listings today.</p>'
     )
     skip_note = (
-        f'<p style="color:#bbb;font-size:12px;margin-top:4px;">{skipped} skipped (no structured data)</p>'
+        f'<p style="color:#bbb;font-size:12px;margin-top:4px;">{skipped} skipped (clinical title or no structured data)</p>'
         if skipped else ""
     )
     filter_note = (
@@ -1320,6 +1348,7 @@ async def _run_site(
     since_date: date,
 ) -> tuple:
     async with sem:
+        _t0 = time.perf_counter()
         try:
             jobs, skipped, newest_seen = await scraper_fn(browser, site, since_date)
             if _sort_collapsed(jobs, newest_seen, since_date):
@@ -1329,10 +1358,12 @@ async def _run_site(
             sort_warning = _sort_collapsed(jobs, newest_seen, since_date)
             if sort_warning:
                 _log(f"  {site['name']}: sort still collapsed after retry — flagging in email")
-            _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped} skipped — {_page_freshness(newest_seen)}")
+            _elapsed = int(time.perf_counter() - _t0)
+            _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped} skipped, {_elapsed}s — {_page_freshness(newest_seen)}")
             return (site["name"], jobs, skipped, sort_warning, newest_seen, site.get("email_bucket", "regional"))
         except Exception as e:
-            _log(f"  {site['name']}: ERROR — {e}")
+            _elapsed = int(time.perf_counter() - _t0)
+            _log(f"  {site['name']}: ERROR after {_elapsed}s — {e}")
             return (site["name"], [], 0, False, None, site.get("email_bucket", "regional"))
 
 
@@ -1349,14 +1380,15 @@ async def main() -> None:
             seen_record: dict[str, str] = {}
             try:
                 sem = asyncio.Semaphore(3)
-                # Heaviest sites first (LPT heuristic): filtered/remote Workday sites
-                # iterate many pages; Phenom sites are faster; Bon Secours (non-filtered
-                # Workday) stops early when dates go stale so goes last.
+                # LPT ordering — slowest sites first so they claim the first 3 slots.
+                # Phenom (serial per-job detail fetches, minutes each) > Workday filtered
+                # (CXS intercept, seconds/page) > Emory/iCIMS (API intercept, very fast) >
+                # Workday unfiltered (quick date-exhaustion stop).
                 ordered = (
-                    [(scrape_workday_site, s) for s in WORKDAY_SITES if s.get("remote_only") or s.get("location_keywords")]
-                    + [(scrape_emory_site, s) for s in EMORY_SITES]
-                    + [(scrape_site, s) for s in SITES]
+                    [(scrape_site, s) for s in SITES]
+                    + [(scrape_workday_site, s) for s in WORKDAY_SITES if s.get("remote_only") or s.get("location_keywords")]
                     + [(scrape_icims_site, s) for s in ICIMS_SITES]
+                    + [(scrape_emory_site, s) for s in EMORY_SITES]
                     + [(scrape_workday_site, s) for s in WORKDAY_SITES if not s.get("remote_only") and not s.get("location_keywords")]
                 )
                 tasks = [_run_site(sem, fn, browser, site, TODAY) for fn, site in ordered]
