@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import json
 import os
@@ -128,7 +129,7 @@ WORKDAY_SITES = [
      "location_keywords": {"charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
                            "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson"},
      "max_pages": 8, "max_results": 15, "email_bucket": "regional"},
-    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": True, "max_pages": 6, "email_bucket": "remote"},
+    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": False, "max_pages": 6, "email_bucket": "remote"},
     {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers?remoteType=bdea8b359c5810280e51f98b08180000&remoteType=bdea8b359c5810280e51f98b08180001", "remote_only": True, "max_pages": 8, "email_bucket": "remote"},
     {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate",       "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
     # Payer / vendor — commented out; activate when payer digest is ready
@@ -193,6 +194,93 @@ TITLE_EXCLUDE_WORDS = {
     "np", "acnp", "scribe", "app", "sales",
 }
 PAYER_EXCLUDE_WORDS = {"lead", "senior", "manager", "director", "principal"}
+
+# ---------------------------------------------------------------------------
+# Priority scoring config — tune patterns and org tiers here
+# ---------------------------------------------------------------------------
+# Role families: health informatics · clinical data analytics · clinical workflow/
+# process improvement · clinical application support/design · research data mgmt ·
+# patient quality & safety · clinical documentation integrity ·
+# population/community health analytics · health BI/BA
+PRIORITY_CONFIG: dict = {
+    "strong_title_patterns": [
+        # Health informatics
+        r"informatics",
+        # Clinical data analytics
+        r"clinical data anal",      # "clinical data analyst/analytics", not "coordinator"
+        r"clinical analytics",
+        # Clinical application support / design
+        r"\bepic\b",                # Epic EHR — almost always an application analyst role
+        r"ehr (analyst|specialist|consultant|build)",
+        r"emr (analyst|specialist|consultant|build)",
+        r"application (analyst|specialist|build|consultant)",
+        # Research data management
+        r"research data",
+        r"data governance",
+        # Patient quality & safety
+        r"patient safety (analyst|specialist|data)",
+        r"quality (improvement analyst|data analyst)",
+        # Clinical documentation integrity
+        r"documentation integrity",
+        r"\bcdi\b",
+        # Population / community health analytics
+        r"population health",
+        r"community health (analyst|data|informatics)",
+        r"public health (analyst|data|informatics)",
+        # Health BI / analytics
+        r"\banalytics\b",
+        r"business intelligence",
+        r"\bbi (analyst|developer|specialist)\b",
+        r"reporting analyst",
+        r"decision support",
+        r"data engineer",
+        r"data scientist",
+        r"data architect",
+        # Clinical workflow / process improvement
+        r"clinical workflow",
+        r"workflow (analyst|specialist|consultant)",
+        r"process improvement (analyst|specialist|consultant)",
+        r"performance improvement (analyst|specialist)",
+        r"clinical data",
+    ],
+    "supporting_title_patterns": [
+        r"data analyst",
+        r"data specialist",
+        r"data manager",
+        r"systems analyst",
+        r"outcomes analyst",
+        r"outcomes research",
+        r"health(care)? analyst",
+        r"business analyst",
+        r"quality analyst",
+        r"quality improvement\b",
+    ],
+    "downgrade_patterns": [
+        r"clinical documentation specialist",   # medical records/HIM, not CDI
+        r"charge entry",
+        r"coding specialist",
+        r"medical record",
+        r"transcription",
+        r"\bdirector\b",
+    ],
+    # All get +1 score boost — must match "name" field in site config exactly
+    "preferred_orgs": [
+        "UVA Health",
+        "VCU Health",
+        "Bon Secours",
+        "VUMC",
+        "Duke Health (Remote)",
+        "Emory Healthcare (Atlanta)",
+        "Emory Healthcare (Remote)",
+    ],
+    # Subset for teal color accent — no scoring difference from other preferred orgs
+    "richmond_orgs": [
+        "UVA Health",
+        "VCU Health",
+        "Bon Secours",
+    ],
+    "score_thresholds": {"primary": 3},
+}
 
 # iCIMS ATS
 ICIMS_SITES: list[dict] = [
@@ -1232,6 +1320,56 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
 # Title exclusion filter
 # ---------------------------------------------------------------------------
 
+def _priority_score(job: dict, site_name: str) -> str:
+    t = job["title"].lower()
+    score = 0
+    for pat in PRIORITY_CONFIG["strong_title_patterns"]:
+        if re.search(pat, t, re.IGNORECASE):
+            score += 3
+    for pat in PRIORITY_CONFIG["supporting_title_patterns"]:
+        if re.search(pat, t, re.IGNORECASE):
+            score += 1
+    for pat in PRIORITY_CONFIG["downgrade_patterns"]:
+        if re.search(pat, t, re.IGNORECASE):
+            score -= 2
+    if site_name in PRIORITY_CONFIG["preferred_orgs"]:
+        score += 1
+    return "primary" if score >= PRIORITY_CONFIG["score_thresholds"]["primary"] else "secondary"
+
+
+def _build_top_matches(richmond: list[tuple[str, dict]], others: list[tuple[str, dict]]) -> str:
+    if not richmond and not others:
+        return ""
+
+    def _item(site_name: str, job: dict) -> str:
+        loc = job.get("location") or "Location not listed"
+        return (
+            f'<li style="margin:4px 0;font-size:13px;">'
+            f'<a href="{job["url"]}" style="color:#1a4a7a;font-weight:bold;">{job["title"]}</a>'
+            f' &mdash; {site_name} &mdash; {loc}'
+            f'</li>'
+        )
+
+    blocks = []
+    if richmond:
+        items = "".join(_item(s, j) for s, j in richmond)
+        blocks.append(
+            f'<div style="background:#f0fdfa;border-left:3px solid #0d9488;padding:10px 14px;margin-bottom:12px;">'
+            f'<p style="color:#134e4a;font-weight:bold;margin:0 0 8px 0;font-size:14px;">★ Top Matches &mdash; Richmond ({len(richmond)})</p>'
+            f'<ul style="margin:0;padding-left:18px;line-height:1.7;">{items}</ul>'
+            f'</div>'
+        )
+    if others:
+        items = "".join(_item(s, j) for s, j in others)
+        blocks.append(
+            f'<div style="background:#fffbeb;border-left:3px solid #d97706;padding:10px 14px;margin-bottom:12px;">'
+            f'<p style="color:#92400e;font-weight:bold;margin:0 0 8px 0;font-size:14px;">★ Top Matches ({len(others)})</p>'
+            f'<ul style="margin:0;padding-left:18px;line-height:1.7;">{items}</ul>'
+            f'</div>'
+        )
+    return "".join(blocks)
+
+
 def _is_excluded_title(title: str, extra_words: frozenset[str] = frozenset()) -> bool:
     t = title.lower()
     if any(phrase in t for phrase in TITLE_EXCLUDE_PHRASES):
@@ -1256,8 +1394,18 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
     shown_jobs = [j for j in jobs if not _is_excluded_title(j["title"], extra_words)]
     filtered = len(jobs) - len(shown_jobs)
     count = len(shown_jobs)
+    is_richmond = site_name in PRIORITY_CONFIG["richmond_orgs"]
+    scored = sorted(
+        [(j, _priority_score(j, site_name)) for j in shown_jobs],
+        key=lambda x: 0 if x[1] == "primary" else 1,
+    )
     job_items_html = []
-    for job in shown_jobs:
+    for job, priority in scored:
+        if priority == "primary":
+            badge_color = "#0d9488" if is_richmond else "#d97706"
+            badge = f'<span style="color:{badge_color};font-weight:bold;margin-right:4px;">★</span>'
+        else:
+            badge = ""
         subtext_parts = [
             job["location"] or "Location not listed",
             job.get("occupational_category", ""),
@@ -1267,7 +1415,7 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
         subtext = " · ".join(p for p in subtext_parts if p)
         job_items_html.append(
             f'<li style="margin-bottom:10px;">'
-            f'<a href="{job["url"]}" style="color:#1a4a7a;font-weight:bold;">{job["title"]}</a><br>'
+            f'{badge}<a href="{job["url"]}" style="color:#1a4a7a;font-weight:bold;">{job["title"]}</a><br>'
             f'<span style="color:#666;font-size:13px;">{subtext}</span>'
             f'</li>'
         )
@@ -1300,6 +1448,20 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
 def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date, extra_words: frozenset[str] = frozenset()) -> str:
     total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
     date_str = today.strftime('%b %d, %Y')
+
+    richmond_primaries: list[tuple[str, dict]] = []
+    other_primaries: list[tuple[str, dict]] = []
+    for site_name, jobs, _, _, _ in results:
+        for job in jobs:
+            if _is_excluded_title(job["title"], extra_words):
+                continue
+            if _priority_score(job, site_name) == "primary":
+                if site_name in PRIORITY_CONFIG["richmond_orgs"]:
+                    richmond_primaries.append((site_name, job))
+                else:
+                    other_primaries.append((site_name, job))
+    top_matches_html = _build_top_matches(richmond_primaries, other_primaries)
+
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
         _build_site_section(site_name, jobs, skipped, sort_warning, newest_seen, extra_words)
         for site_name, jobs, skipped, sort_warning, newest_seen in results
@@ -1310,6 +1472,7 @@ def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None
 <body style="font-family:Arial,sans-serif;max-width:680px;margin:auto;padding:24px;color:#222;">
   <h2 style="color:#1a4a7a;margin-bottom:4px;">Health Job Alert</h2>
   <p style="color:#888;font-size:13px;margin-top:0;">{date_str} · {total} new posting{"s" if total != 1 else ""}</p>
+  {top_matches_html}
   {sections}
   <hr style="border:none;border-top:1px solid #eee;margin-top:32px;">
   <p style="color:#bbb;font-size:12px;">Scraped automatically</p>
@@ -1368,9 +1531,17 @@ async def _run_site(
 
 
 async def main() -> None:
+    parser = argparse.ArgumentParser(description="Health job scraper")
+    parser.add_argument("--since", metavar="YYYY-MM-DD", help="Override since-date (default: yesterday)")
+    parser.add_argument("--no-email", action="store_true", help="Skip email; write HTML previews to disk instead")
+    args = parser.parse_args()
+
+    since_date = date.fromisoformat(args.since) if args.since else TODAY
+    no_email = args.no_email
+
     _validate_env()
     _rotate_log()
-    _log(f"Run started (since={TODAY})")
+    _log(f"Run started (since={since_date})")
 
     try:
         async with async_playwright() as pw:
@@ -1391,7 +1562,7 @@ async def main() -> None:
                     + [(scrape_emory_site, s) for s in EMORY_SITES]
                     + [(scrape_workday_site, s) for s in WORKDAY_SITES if not s.get("remote_only") and not s.get("location_keywords")]
                 )
-                tasks = [_run_site(sem, fn, browser, site, TODAY) for fn, site in ordered]
+                tasks = [_run_site(sem, fn, browser, site, since_date) for fn, site in ordered]
                 results = list(await asyncio.gather(*tasks))
 
                 seen_urls = _load_seen_jobs()
@@ -1415,21 +1586,29 @@ async def main() -> None:
                         deduped.append((name, fresh, skipped, sort_warn, newest))
                     return deduped
 
-                regional_results = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "regional"])
-                remote_results   = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "remote"])
-                payer_results    = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "payer"])
+                main_results  = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt in ("regional", "remote")])
+                payer_results = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "payer"])
 
                 def _has_content(bucket_results, extra_words=frozenset()):
                     visible = sum(1 for _, jobs, _, _, _ in bucket_results
                                   for j in jobs if not _is_excluded_title(j["title"], extra_words))
                     return visible > 0 or any(sk or sw for _, _, sk, sw, _ in bucket_results)
 
-                if _has_content(regional_results):
-                    send_email(regional_results, TODAY, label="Regional")
-                if _has_content(remote_results):
-                    send_email(remote_results, TODAY, label="Remote")
-                if _has_content(payer_results, frozenset(PAYER_EXCLUDE_WORDS)):
-                    send_email(payer_results, TODAY, label="Payer", extra_words=frozenset(PAYER_EXCLUDE_WORDS))
+                if no_email:
+                    for label, bucket, extra in [
+                        ("Main",  main_results,  frozenset()),
+                        ("Payer", payer_results, frozenset(PAYER_EXCLUDE_WORDS)),
+                    ]:
+                        if _has_content(bucket, extra):
+                            html = build_html_email(bucket, since_date, extra)
+                            out = BASE_DIR / f"preview_{label.lower()}.html"
+                            out.write_text(html, encoding="utf-8")
+                            _log(f"  --no-email: wrote {out.name}")
+                else:
+                    if _has_content(main_results):
+                        send_email(main_results, TODAY)
+                    if _has_content(payer_results, frozenset(PAYER_EXCLUDE_WORDS)):
+                        send_email(payer_results, TODAY, label="Payer", extra_words=frozenset(PAYER_EXCLUDE_WORDS))
 
             finally:
                 _save_seen_jobs(seen_record)
