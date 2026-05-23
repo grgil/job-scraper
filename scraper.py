@@ -1253,7 +1253,8 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                 if dp != since_date:
                     continue
 
-                job_url = f"https://emory.jobs/jobs/{title_slug}/{guid}/"
+                city_slug = f"{city.lower().replace(' ', '-')}-{state.lower()}" if city and state else "remote"
+                job_url = f"https://emory.jobs/{city_slug}/{title_slug}/{guid}/job/"
                 location = loc_exact or (f"{city}, {state}" if city and state else city or state)
                 loc_str = location.lower()
                 is_remote = any(k in loc_str for k in REMOTE_LOCATION_KEYWORDS)
