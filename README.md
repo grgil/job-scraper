@@ -8,10 +8,10 @@ Daily and weekly job alert scraper covering health system portals across Workday
 
 | Digest | Contents |
 |--------|----------|
-| **Main** | All active sites — regional and remote entries combined into one digest |
+| **Main** | All active sites — one digest regardless of remote or on-site scope |
 | **Payer** | Humana, Elevance, Cigna, Solventum, Veradigm, Waystar *(commented out — activate when ready)* |
 
-`email_bucket` on each site config is `"regional"` (main digest) or `"payer"`. There is no separate remote digest — `remote_only=True` controls scraping behavior; `email_bucket` controls routing.
+`email_bucket` on each site config is `"main"` or `"payer"`. `remote_only=True` controls scraping behavior; `email_bucket` controls which digest the results route to.
 
 ### Active sites
 
@@ -113,7 +113,7 @@ Primary metadata is used by the weekly recap to recover jobs the rescrape may ha
    - Phenom → `SITES`
    - iCIMS → `ICIMS_SITES`
    - DirectEmployers/Jobsyn → `EMORY_SITES`
-3. Set `email_bucket` to `"regional"` or `"payer"`
+3. Set `email_bucket` to `"main"` or `"payer"`
 4. Set `remote_only=True` or `location_keywords={...}` as needed
 
 **Decision framework:**
@@ -121,9 +121,9 @@ Primary metadata is used by the weekly recap to recover jobs the rescrape may ha
 | Org type | `remote_only` | `location_keywords` | `email_bucket` | Notes |
 |----------|--------------|---------------------|----------------|-------|
 | Payer / vendor | `True` | — | `"payer"` | Comment out until payer digest is activated |
-| Health system in target metro | `False` | city set | `"regional"` | URL location filter + keywords = two-pass |
-| Health system outside target metros | `True` | — | `"regional"` | remote_only handles the filtering |
-| Spans both | — | — | `"regional"` | Two entries: one with location_keywords, one with remote_only=True |
+| Health system in target metro | `False` | city set | `"main"` | URL location filter + keywords = two-pass |
+| Health system outside target metros | `True` | — | `"main"` | remote_only handles the filtering |
+| Spans both | — | — | `"main"` | Two entries: one with location_keywords, one with remote_only=True |
 
 ---
 

@@ -41,7 +41,7 @@ SITES = [
             "?sortBy=postingdate&descending=true"
         ),
         "max_pages": 20,
-        "email_bucket": "regional",
+        "email_bucket": "main",
     },
     {
         "name": "VCU Health",
@@ -49,7 +49,7 @@ SITES = [
             "https://careers.vcuhealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
-        "email_bucket": "regional",
+        "email_bucket": "main",
     },
     {
         "name": "Duke Health (Remote)",
@@ -59,13 +59,13 @@ SITES = [
         ),
         "remote_only": True,
         "max_pages": 12,
-        "email_bucket": "regional",
+        "email_bucket": "main",
     },
 ]
 
 WORKDAY_SITES = [
-    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "remote_only": False, "email_bucket": "regional"},
-    {"name": "Carilion Clinic",           "url": "https://carilionclinic.wd12.myworkdayjobs.com/External_Careers",         "remote_only": False, "max_pages": 12, "email_bucket": "regional"},
+    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "remote_only": False, "email_bucket": "main"},
+    {"name": "Carilion Clinic",           "url": "https://carilionclinic.wd12.myworkdayjobs.com/External_Careers",         "remote_only": False, "max_pages": 12, "email_bucket": "main"},
     {"name": "Prisma Health (Greenville)",
      "url": (
          "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate"
@@ -83,7 +83,7 @@ WORKDAY_SITES = [
          "&primaryLocation=e37e7eee17f2016294c6d71fa30274c2"
      ),
      "location_keywords": {"greenville", "simpsonville", "easley", "greer", "travelers rest", "powdersville", "laurens"},
-     "max_pages": 8, "email_bucket": "regional"},
+     "max_pages": 8, "email_bucket": "main"},
     {"name": "Wellstar Health (Atlanta)",
      "url": (
          "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers"
@@ -96,7 +96,7 @@ WORKDAY_SITES = [
          "&locations=ed12bf55a64c102860da168d7df60000"
      ),
      "location_keywords": {"atlanta", "marietta", "smyrna", "kennesaw", "woodstock", "cartersville", "douglasville", "newnan", "austell", "acworth"},
-     "max_pages": 8, "email_bucket": "regional"},
+     "max_pages": 8, "email_bucket": "main"},
     {"name": "Atrium Health (Charlotte)",
      "url": (
          "https://aah.wd5.myworkdayjobs.com/External"
@@ -128,11 +128,11 @@ WORKDAY_SITES = [
      ),
      "location_keywords": {"charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
                            "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson"},
-     "max_pages": 8, "max_results": 15, "email_bucket": "regional"},
-    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": False, "max_pages": 6, "email_bucket": "regional"},
-    {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers?remoteType=bdea8b359c5810280e51f98b08180000&remoteType=bdea8b359c5810280e51f98b08180001", "remote_only": True, "max_pages": 8, "email_bucket": "regional"},
-    {"name": "Sentara",                   "url": "https://sentara.wd1.myworkdayjobs.com/SCS?q=remote",                     "remote_only": True, "max_pages": 6,  "email_bucket": "regional"},
-    {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate?q=remote",       "remote_only": True, "max_pages": 12, "email_bucket": "regional"},
+     "max_pages": 8, "max_results": 15, "email_bucket": "main"},
+    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": False, "max_pages": 6, "email_bucket": "main"},
+    {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers?remoteType=bdea8b359c5810280e51f98b08180000&remoteType=bdea8b359c5810280e51f98b08180001", "remote_only": True, "max_pages": 8, "email_bucket": "main"},
+    {"name": "Sentara",                   "url": "https://sentara.wd1.myworkdayjobs.com/SCS?q=remote",                     "remote_only": True, "max_pages": 6,  "email_bucket": "main"},
+    {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate?q=remote",       "remote_only": True, "max_pages": 12, "email_bucket": "main"},
     # Payer / vendor — commented out; activate when payer digest is ready
     # {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
     # {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
@@ -288,7 +288,7 @@ ICIMS_SITES: list[dict] = [
         "url": "https://ascensionjobs1-ascension.icims.com/jobs/search?ss=1&searchRelation=keyword_all&searchLocation=--Remote",
         "remote_only": True,
         "max_pages": 6,
-        "email_bucket": "regional",
+        "email_bucket": "main",
     },
 ]
 
@@ -304,13 +304,13 @@ EMORY_SITES = [
             "east point", "forest park",
         },
         "remote_only": False,
-        "email_bucket": "regional",
+        "email_bucket": "main",
     },
     {
         "name": "Emory Healthcare (Remote)",
         "page_url": "https://emory.jobs/jobs/",
         "remote_only": True,
-        "email_bucket": "regional",
+        "email_bucket": "main",
     },
 ]
 
@@ -1494,11 +1494,11 @@ async def _run_site(
                 _log(f"  {site['name']}: sort still collapsed after retry — flagging in email")
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped} skipped, {_elapsed}s — {_page_freshness(newest_seen)}")
-            return (site["name"], jobs, skipped, sort_warning, newest_seen, site.get("email_bucket", "regional"))
+            return (site["name"], jobs, skipped, sort_warning, newest_seen, site.get("email_bucket", "main"))
         except Exception as e:
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"  {site['name']}: ERROR after {_elapsed}s — {e}")
-            return (site["name"], [], 0, False, None, site.get("email_bucket", "regional"))
+            return (site["name"], [], 0, False, None, site.get("email_bucket", "main"))
 
 
 async def main() -> None:
@@ -1572,7 +1572,7 @@ async def main() -> None:
                     # All main results — no dedup filter, include seen jobs
                     all_week = [(n, j, sk, sw, ns)
                                 for n, j, sk, sw, ns, bkt in results
-                                if bkt == "regional"]
+                                if bkt == "main"]
 
                     # Add any new URLs found by rescrape to seen_record
                     rescrape_urls: set[str] = set()
@@ -1657,7 +1657,7 @@ async def main() -> None:
                             deduped.append((name, fresh, skipped, sort_warn, newest))
                         return deduped
 
-                    main_results  = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "regional"])
+                    main_results  = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "main"])
                     payer_results = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "payer"])
 
                     def _has_content(bucket_results, extra_words=frozenset()):
