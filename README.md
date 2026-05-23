@@ -1,16 +1,37 @@
 # Health Job Scraper
 
-Daily and weekly job alert scraper covering 14 health system portals across Workday, Phenom, iCIMS, and DirectEmployers (Jobsyn) ATS platforms. Uses Playwright (headless Chromium) for JavaScript-rendered pages. Runs automatically via GitHub Actions and sends targeted email digests by market.
+Daily and weekly job alert scraper covering health system portals across Workday, Phenom People, iCIMS, and DirectEmployers (Jobsyn) ATS platforms. Uses Playwright (headless Chromium) for JavaScript-rendered pages. Runs automatically via GitHub Actions.
 
 ---
 
 ## Email digests
 
-| Digest | Orgs |
-|--------|------|
-| **Regional** | VCU Health, UVA Health, Bon Secours, Carilion Clinic, Prisma Health (Greenville), Wellstar (Atlanta), Atrium Health (Charlotte), Emory Healthcare (Atlanta) |
-| **Remote** | Duke Health, MUSC, VUMC, Prisma Health, Emory Healthcare, Ascension |
+| Digest | Contents |
+|--------|----------|
+| **Main** | All active sites — regional and remote entries combined into one digest |
 | **Payer** | Humana, Elevance, Cigna, Solventum, Veradigm, Waystar *(commented out — activate when ready)* |
+
+`email_bucket` on each site config is `"regional"` (main digest) or `"payer"`. There is no separate remote digest — `remote_only=True` controls scraping behavior; `email_bucket` controls routing.
+
+### Active sites
+
+| Site | ATS | Market |
+|------|-----|--------|
+| UVA Health | Phenom | Richmond regional |
+| VCU Health | Phenom | Richmond regional |
+| Duke Health | Phenom | Remote only |
+| Bon Secours | Workday | Richmond regional |
+| Carilion Clinic | Workday | Richmond regional |
+| Prisma Health (Greenville) | Workday | Greenville SC regional |
+| Wellstar Health | Workday | Atlanta regional |
+| Atrium Health | Workday | Charlotte regional |
+| MUSC | Workday | Remote only |
+| VUMC | Workday | Remote only |
+| Sentara | Workday | Remote only |
+| Prisma Health (Remote) | Workday | Remote only |
+| Ascension | iCIMS | Remote only |
+| Emory Healthcare (Atlanta) | Jobsyn | Atlanta regional |
+| Emory Healthcare (Remote) | Jobsyn | Remote only |
 
 ---
 
@@ -41,6 +62,7 @@ EMAIL_APP_PASS=xxxx xxxx xxxx xxxx
 python scraper.py               # daily run (today's new jobs)
 python scraper.py --weekly      # weekly recap (primary-only, 7-day lookback)
 python scraper.py --no-email    # write preview_*.html instead of sending
+python scraper.py --since YYYY-MM-DD  # override the since-date
 ```
 
 ---
@@ -91,14 +113,43 @@ Primary metadata is used by the weekly recap to recover jobs the rescrape may ha
    - Phenom → `SITES`
    - iCIMS → `ICIMS_SITES`
    - DirectEmployers/Jobsyn → `EMORY_SITES`
-3. Set `email_bucket` to `"regional"`, `"remote"`, or `"payer"`
-4. Set `remote_only: True` or `location_keywords: {...}` as needed
+3. Set `email_bucket` to `"regional"` or `"payer"`
+4. Set `remote_only=True` or `location_keywords={...}` as needed
 
 **Decision framework:**
-- Payer/vendor org → `email_bucket: "payer"`, `remote_only: True`, comment out until activated
-- Health system in a target metro → `email_bucket: "regional"`, `location_keywords`
-- Health system outside target metros, remote-friendly → `email_bucket: "remote"`, `remote_only: True`
-- Spans both → two entries (one per bucket, same URL)
+
+| Org type | `remote_only` | `location_keywords` | `email_bucket` | Notes |
+|----------|--------------|---------------------|----------------|-------|
+| Payer / vendor | `True` | — | `"payer"` | Comment out until payer digest is activated |
+| Health system in target metro | `False` | city set | `"regional"` | URL location filter + keywords = two-pass |
+| Health system outside target metros | `True` | — | `"regional"` | remote_only handles the filtering |
+| Spans both | — | — | `"regional"` | Two entries: one with location_keywords, one with remote_only=True |
+
+---
+
+## URL-level filtering
+
+Each site optionally pre-filters results at the portal URL before the scraper applies its own post-filters (`remote_only`, `location_keywords`). Two filter types are used:
+
+**Location type** — platform-native location IDs extracted from the Workday or iCIMS UI. Exact match against a specific location entity; stable long-term.
+
+**Keyword search** — `?q=` parameter matching text in job title or description. Used only when no location-type filter was available for a given tenant. Fuzzier — may surface false positives (e.g. "Remote Patient Monitoring Tech" matching `?q=remote`); `remote_only=True` catches these in the post-filter.
+
+| Site | URL filter | Type |
+|------|-----------|------|
+| UVA Health, VCU Health, Duke Health | `?sortBy=postingdate&descending=true` | Sort only |
+| Bon Secours, Carilion | none | — |
+| Prisma Health (Greenville) | `?primaryLocation=…` ×12 | Location type — Workday location IDs for Greenville area |
+| Wellstar Health (Atlanta) | `?locations=…` ×7 | Location type — Workday location IDs for Atlanta metro |
+| Atrium Health (Charlotte) | `?locationRegionStateProvince=…&locations=…` ×24 | Location type — NC state + Charlotte-area location IDs |
+| MUSC | `?locationHierarchy1=…` | Location type — Workday hierarchy ID for remote locations |
+| VUMC | `?remoteType=…` ×2 | Location type — Workday native remote/hybrid category IDs |
+| Sentara | `?q=remote` | Keyword search |
+| Prisma Health (Remote) | `?q=remote` | Keyword search |
+| Ascension | `?searchLocation=--Remote` | Location type — iCIMS native remote location value |
+| Emory Healthcare | none | — (post-filter via `location_keywords` or `remote_only`) |
+
+**Note on Workday CXS sort:** Workday's CXS API (the XHR endpoint the scraper intercepts) does not expose a sort-by-date parameter. Injecting a `"sort"` field into the POST body is silently ignored. Date ordering relies on the `consecutive_empty` stopping mechanism — the scraper stops after 5 consecutive pages with no in-window jobs.
 
 ---
 
@@ -121,9 +172,8 @@ python perf_report.py --run 2    # second-most-recent run
 
 Prints a per-site table with columns: elapsed seconds, qualifying count, skipped count, stop reason, and freshness.
 
-Stop reason values:
-| Value | Meaning |
-|-------|---------|
+| Stop reason | Meaning |
+|-------------|---------|
 | `no_more_pages` | Paginated to natural end of results |
 | `consecutive (pN)` | 5 consecutive pages with 0 in-window jobs, stopped at page N |
 | `max_pages (pN)` | Hit the configured page cap at page N |
@@ -142,4 +192,6 @@ Requires at least one run after the timing instrumentation was added (May 2026).
 
 **JSON-LD missing** — some ATS versions don't embed structured data on every detail page. Jobs are skipped and counted in the `skipped` total logged per site.
 
-**New ATS / selectors changed** — run `inspect_selectors.py` with the portal URL to audit selectors and XHR patterns before editing the scraper.
+**New ATS / selectors changed** — run `inspect_selectors.py` with the portal URL to audit selectors and XHR patterns before editing the scraper. Previously investigated orgs that are blocked or require custom scrapers are documented in the `inspect_selectors.py` header.
+
+**Workday location IDs changed** — the opaque hash IDs in `?locations=`, `?primaryLocation=`, `?remoteType=` etc. are extracted from the Workday UI facet URLs. If a site stops returning the expected location-filtered results, re-inspect the portal, apply the filters manually in the browser, and extract the updated IDs from the URL.

@@ -7,6 +7,37 @@ Usage:
   3. Review output: JSON-LD presence, job link selectors, pagination, XHR calls, iframes
 
 Clear the URL lists when done — do not commit live URLs to this file.
+
+# ---------------------------------------------------------------------------
+# Investigated — blocked, unresolvable, or requires custom scraper
+# ---------------------------------------------------------------------------
+#
+# Novant Health
+#   URL: https://jobs.novanthealth.org/careers-home/jobs?page=1&sortBy=posted_date&tags6=Charlotte%20Area&descending=true
+#   Result: zero output — no links, XHR, CSS classes, or frames in headless mode
+#   Verdict: bot detection or heavy JS gating; requires non-headless or a different entry URL
+#   Note: _icims_content_frame() in scraper.py mentions Novant as a known iframe-based iCIMS
+#         portal, but the careers-home URL itself produces nothing in headless Chromium
+#
+# Centene
+#   URLs tried: centene.wd5.myworkdayjobs.com (Workday tenant), jobs.centene.com
+#   Result: both blocked / timeout at scrape time
+#   Verdict: skip; re-inspect if re-evaluated
+#
+# CorroHealth
+#   URL: (Workday tenant — not recorded)
+#   Result: Workday maintenance page at scrape time
+#   Verdict: skip; re-inspect if re-evaluated
+#
+# CommonSpirit Health
+#   URL: https://www.commonspirit.careers/search-jobs
+#   ATS: Custom frontend (commonspirit.careers) wrapping careers-commonspirit.icims.com
+#   Result: page loads; job links present (pattern: /job/{city}/{slug}/{dept-id}/{job-id})
+#           CSS classes: job-list__job-title, search-results-list__job-link, pagination-view-more
+#           No dates in listing cards — detail page visits required per job
+#           pagination-view-more = load-more button, not traditional pagination
+#   Verdict: feasible but needs a custom scraper (not standard Workday/iCIMS/Phenom)
+# ---------------------------------------------------------------------------
 """
 import asyncio
 from playwright.async_api import async_playwright

@@ -59,7 +59,7 @@ SITES = [
         ),
         "remote_only": True,
         "max_pages": 12,
-        "email_bucket": "remote",
+        "email_bucket": "regional",
     },
 ]
 
@@ -129,9 +129,10 @@ WORKDAY_SITES = [
      "location_keywords": {"charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
                            "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson"},
      "max_pages": 8, "max_results": 15, "email_bucket": "regional"},
-    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": False, "max_pages": 6, "email_bucket": "remote"},
-    {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers?remoteType=bdea8b359c5810280e51f98b08180000&remoteType=bdea8b359c5810280e51f98b08180001", "remote_only": True, "max_pages": 8, "email_bucket": "remote"},
-    {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate",       "remote_only": True, "max_pages": 12, "email_bucket": "remote"},
+    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": False, "max_pages": 6, "email_bucket": "regional"},
+    {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers?remoteType=bdea8b359c5810280e51f98b08180000&remoteType=bdea8b359c5810280e51f98b08180001", "remote_only": True, "max_pages": 8, "email_bucket": "regional"},
+    {"name": "Sentara",                   "url": "https://sentara.wd1.myworkdayjobs.com/SCS?q=remote",                     "remote_only": True, "max_pages": 6,  "email_bucket": "regional"},
+    {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate?q=remote",       "remote_only": True, "max_pages": 12, "email_bucket": "regional"},
     # Payer / vendor — commented out; activate when payer digest is ready
     # {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
     # {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
@@ -141,8 +142,6 @@ WORKDAY_SITES = [
     # {"name": "Waystar (Atlanta / Louisville)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",
     #  "location_keywords": {"atlanta", "louisville"}, "max_pages": 6, "email_bucket": "payer"},
     # {"name": "Waystar (Remote)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",                   "remote_only": True, "max_pages": 6,  "email_bucket": "payer"},
-    # Centene — wd5 tenant and jobs.centene.com both blocked/timing out
-    # CorroHealth — Workday maintenance page, blocked
 ]
 
 REMOTE_LOCATION_KEYWORDS = {"remote", "work at home", "work from home", "virtual", "telecommute", "home based"}
@@ -289,7 +288,7 @@ ICIMS_SITES: list[dict] = [
         "url": "https://ascensionjobs1-ascension.icims.com/jobs/search?ss=1&searchRelation=keyword_all&searchLocation=--Remote",
         "remote_only": True,
         "max_pages": 6,
-        "email_bucket": "remote",
+        "email_bucket": "regional",
     },
 ]
 
@@ -311,7 +310,7 @@ EMORY_SITES = [
         "name": "Emory Healthcare (Remote)",
         "page_url": "https://emory.jobs/jobs/",
         "remote_only": True,
-        "email_bucket": "remote",
+        "email_bucket": "regional",
     },
 ]
 
@@ -630,33 +629,6 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
 # ---------------------------------------------------------------------------
 # Workday ATS
 # ---------------------------------------------------------------------------
-
-async def _get_workday_job_links(page, site: dict) -> list[dict]:
-    _log(f"  Loading {site['url']}")
-    await page.goto(site["url"], wait_until="networkidle", timeout=90_000)
-    try:
-        await page.wait_for_function(
-            """() => document.querySelectorAll(
-                'a[data-automation-id="jobTitle"]'
-            ).length >= 5""",
-            timeout=30_000,
-        )
-    except PlaywrightTimeoutError:
-        _log(f"  {site['name']}: WARN — Workday job titles timed out"
-             " (selector: a[data-automation-id=jobTitle])")
-        return []
-    return await page.evaluate("""() => {
-        const seen = new Set();
-        const results = [];
-        document.querySelectorAll('a[data-automation-id="jobTitle"]').forEach(a => {
-            if (seen.has(a.href)) return;
-            seen.add(a.href);
-            const title = (a.innerText || a.textContent || '').trim();
-            if (title.length > 3) results.push({ title, url: a.href });
-        });
-        return results;
-    }""")
-
 
 async def _get_workday_next_page(page) -> list[dict]:
     next_btn = page.locator('button[data-uxi-element-id="next"], button[aria-label="next"]').last
@@ -1597,10 +1569,10 @@ async def main() -> None:
                 if weekly:
                     week_cutoff = (date.today() - timedelta(days=7)).isoformat()
 
-                    # All regional + remote results — no dedup filter, include seen jobs
+                    # All main results — no dedup filter, include seen jobs
                     all_week = [(n, j, sk, sw, ns)
                                 for n, j, sk, sw, ns, bkt in results
-                                if bkt in ("regional", "remote")]
+                                if bkt == "regional"]
 
                     # Add any new URLs found by rescrape to seen_record
                     rescrape_urls: set[str] = set()
@@ -1685,7 +1657,7 @@ async def main() -> None:
                             deduped.append((name, fresh, skipped, sort_warn, newest))
                         return deduped
 
-                    main_results  = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt in ("regional", "remote")])
+                    main_results  = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "regional"])
                     payer_results = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "payer"])
 
                     def _has_content(bucket_results, extra_words=frozenset()):
