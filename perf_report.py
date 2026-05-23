@@ -25,13 +25,13 @@ _SUMMARY_RE = re.compile(
 # "Scraping Site Name (Platform) ..."
 _PLATFORM_RE = re.compile(r"^Scraping (.+?) \((.+?)\)")
 
-# Stop-reason patterns (may or may not appear, concurrent logs can interleave)
+# Stop-reason patterns (site name is group 1 when present; page num is group 2 when present)
 _STOP_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("batch_refresh",   re.compile(r"WARN — batch refresh suspected \((.+?)\)")),
-    ("max_pages",       re.compile(r"Page limit \(\d+\) reached")),
-    ("no_more_pages",   re.compile(r"No more pages|no more pages|no_more_pages")),
-    ("all_old",         re.compile(r"all_old")),
-    ("sort_collapsed",  re.compile(r"sort still collapsed")),
+    ("batch_refresh",  re.compile(r"WARN — batch refresh suspected \((.+?)\)")),
+    ("max_pages",      re.compile(r"(.+?): page limit \(\d+\) reached — stopping at page (\d+)")),
+    ("consecutive",    re.compile(r"(.+?): consecutive stop — page (\d+)")),
+    ("no_more_pages",  re.compile(r"No more pages|no more pages")),
+    ("sort_collapsed", re.compile(r"(.+?): sort still collapsed")),
 ]
 
 
@@ -66,16 +66,18 @@ def _build_report(messages: list[str]) -> list[dict]:
         if pm:
             platform_map[pm.group(1)] = pm.group(2)
 
-    # Collect stop reasons per site (batch_refresh names the site; others are positional)
+    # Collect stop reasons per site (group 1 = site name, group 2 = page num when present)
     stop_map: dict[str, str] = {}
     for msg in messages:
         for reason, pat in _STOP_PATTERNS:
             m = pat.search(msg)
             if m:
-                site_name = m.group(1) if pat.groups else None
-                if site_name:
-                    stop_map[site_name] = reason
-                # positional stops are logged inline — hard to attribute without name; skip
+                if pat.groups == 0:
+                    pass  # no site name in pattern; can't attribute
+                elif pat.groups == 1:
+                    stop_map[m.group(1).strip()] = reason
+                elif pat.groups == 2:
+                    stop_map[m.group(1).strip()] = f"{reason} (p{m.group(2)})"
 
     rows = []
     for msg in messages:
@@ -90,7 +92,7 @@ def _build_report(messages: list[str]) -> list[dict]:
             "skipped":    int(skipped),
             "elapsed_s":  int(elapsed),
             "freshness":  freshness,
-            "stop":       stop_map.get(name, "—"),
+            "stop":       stop_map.get(name, "no_more_pages"),
         })
     return rows
 

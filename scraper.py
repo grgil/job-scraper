@@ -322,13 +322,19 @@ def _load_seen_jobs() -> set[str]:
     if SEEN_JOBS_FILE.exists():
         data = json.loads(SEEN_JOBS_FILE.read_text(encoding="utf-8"))
         cutoff = (date.today() - timedelta(days=SEEN_MAX_AGE_DAYS)).isoformat()
-        return {url for url, first_seen in data.items() if first_seen >= cutoff}
+        return {
+            url for url, v in data.items()
+            if (v if isinstance(v, str) else v["first_seen"]) >= cutoff
+        }
     return set()
 
 
-def _save_seen_jobs(seen: dict[str, str]) -> None:
+def _save_seen_jobs(seen: dict) -> None:
     cutoff = (date.today() - timedelta(days=SEEN_MAX_AGE_DAYS)).isoformat()
-    pruned = {url: ts for url, ts in seen.items() if ts >= cutoff}
+    pruned = {
+        url: v for url, v in seen.items()
+        if (v if isinstance(v, str) else v["first_seen"]) >= cutoff
+    }
     SEEN_JOBS_FILE.write_text(json.dumps(pruned, indent=2), encoding="utf-8")
 
 
@@ -598,12 +604,10 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
             freshness = _page_freshness(newest_seen)
             if page_matches == 0:
                 consecutive_empty += 1
-                _log(
-                    f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness}"
-                    f" — {'stopping' if consecutive_empty >= 5 else 'next'}"
-                )
                 if consecutive_empty >= 5:
+                    _log(f"  {site['name']}: consecutive stop — page {page_num}, {freshness}")
                     break
+                _log(f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness} — next")
             else:
                 _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
                 consecutive_empty = 0
@@ -611,7 +615,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
             page_num += 1
             max_pages = site.get("max_pages")
             if max_pages and page_num > max_pages:
-                _log(f"  Page limit ({max_pages}) reached — stopping")
+                _log(f"  {site['name']}: page limit ({max_pages}) reached — stopping at page {page_num}")
                 break
             links = await _get_next_page_links(search_page)
         else:
@@ -866,25 +870,23 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
 
             freshness = _page_freshness(newest_seen)
 
-            if page_dates and len(set(page_dates)) == 1 and page_dates[0] > since_date:
-                _log(f"  WARN — batch refresh suspected ({site['name']}): all dates = {page_dates[0]}, since_date = {since_date} — stopping")
+            if page_dates and len(set(page_dates)) == 1 and page_dates[0] >= date.today():
+                _log(f"  WARN — batch refresh suspected ({site['name']}): all dates = {page_dates[0]} — stopping")
                 break
 
             if page_matches == 0:
                 consecutive_empty += 1
-                _log(
-                    f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness}"
-                    f" — {'stopping' if consecutive_empty >= 5 else 'next'}"
-                )
                 if consecutive_empty >= 5:
+                    _log(f"  {site['name']}: consecutive stop — page {page_num}, {freshness}")
                     break
+                _log(f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness} — next")
             else:
                 _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
                 consecutive_empty = 0
 
             page_num += 1
             if site.get("max_pages") and page_num > site["max_pages"]:
-                _log(f"  Page limit ({site['max_pages']}) reached — stopping")
+                _log(f"  {site['name']}: page limit ({site['max_pages']}) reached — stopping at page {page_num}")
                 break
 
             # ── Advance to next page ──────────────────────────────────────────
@@ -1141,19 +1143,17 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
             freshness = _page_freshness(newest_seen)
             if page_matches == 0:
                 consecutive_empty += 1
-                _log(
-                    f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness}"
-                    f" — {'stopping' if consecutive_empty >= 5 else 'next'}"
-                )
                 if consecutive_empty >= 5:
+                    _log(f"  {site['name']}: consecutive stop — page {page_num}, {freshness}")
                     break
+                _log(f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness} — next")
             else:
                 _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
                 consecutive_empty = 0
 
             page_num += 1
             if max_pages and page_num > max_pages:
-                _log(f"  Page limit ({max_pages}) reached — stopping")
+                _log(f"  {site['name']}: page limit ({max_pages}) reached — stopping at page {page_num}")
                 break
             links = await _get_icims_next_page(icims_frame)
         else:
@@ -1280,12 +1280,10 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
             freshness = _page_freshness(newest_seen)
             if not page_had_fresh:
                 consecutive_old += 1
-                _log(
-                    f"  Page {page_num}: all old ({consecutive_old}/3), {freshness}"
-                    f" — {'stopping' if consecutive_old >= 3 else 'checking next'}"
-                )
                 if consecutive_old >= 3:
+                    _log(f"  {site['name']}: consecutive stop — page {page_num}, {freshness}")
                     break
+                _log(f"  Page {page_num}: all old ({consecutive_old}/3), {freshness} — checking next")
             else:
                 consecutive_old = 0
                 _log(f"  Page {page_num}: fresh jobs, {freshness}")
@@ -1296,7 +1294,7 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
 
             page_num += 1
             if max_pages and page_num > max_pages:
-                _log(f"  Page limit ({max_pages}) reached — stopping")
+                _log(f"  {site['name']}: page limit ({max_pages}) reached — stopping at page {page_num}")
                 break
 
             # Click the full-width "More" load-more button and intercept the API response
@@ -1407,7 +1405,7 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
         else:
             badge = ""
         subtext_parts = [
-            job["location"] or "Location not listed",
+            job.get("location") or "Location not listed",
             job.get("occupational_category", ""),
             job.get("employment_type", ""),
             job.get("work_hours", ""),
@@ -1534,9 +1532,15 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Health job scraper")
     parser.add_argument("--since", metavar="YYYY-MM-DD", help="Override since-date (default: yesterday)")
     parser.add_argument("--no-email", action="store_true", help="Skip email; write HTML previews to disk instead")
+    parser.add_argument("--weekly", action="store_true", help="Weekly recap: 7-day lookback, primary-only, updates seen_jobs")
     args = parser.parse_args()
 
-    since_date = date.fromisoformat(args.since) if args.since else TODAY
+    weekly = args.weekly
+    since_date = (
+        (date.today() - timedelta(days=7)) if weekly
+        else date.fromisoformat(args.since) if args.since
+        else TODAY
+    )
     no_email = args.no_email
 
     _validate_env()
@@ -1551,64 +1555,158 @@ async def main() -> None:
             seen_record: dict[str, str] = {}
             try:
                 sem = asyncio.Semaphore(3)
+
+                # For weekly runs, scale up page caps (the consecutive_empty stop is the
+                # real terminator; max_pages is just a daily safety net). Also drop the
+                # Atrium max_results cap which is only needed to guard daily batch-refresh.
+                # Phenom gets 5× (serial per-job fetches are slow so UVA/Duke run deep);
+                # Workday + iCIMS get 3× (batch page loads, faster to paginate).
+                def _weekly_site(s: dict, multiplier: int = 3) -> dict:
+                    s = dict(s)
+                    if "max_pages" in s:
+                        s["max_pages"] = s["max_pages"] * multiplier
+                    s.pop("max_results", None)
+                    return s
+
+                _sites        = [_weekly_site(s, multiplier=5) for s in SITES]        if weekly else SITES
+                _workday      = [_weekly_site(s) for s in WORKDAY_SITES]               if weekly else WORKDAY_SITES
+                _icims        = [_weekly_site(s) for s in ICIMS_SITES]                 if weekly else ICIMS_SITES
+                _emory        = list(EMORY_SITES)
+
                 # LPT ordering — slowest sites first so they claim the first 3 slots.
                 # Phenom (serial per-job detail fetches, minutes each) > Workday filtered
                 # (CXS intercept, seconds/page) > Emory/iCIMS (API intercept, very fast) >
                 # Workday unfiltered (quick date-exhaustion stop).
                 ordered = (
-                    [(scrape_site, s) for s in SITES]
-                    + [(scrape_workday_site, s) for s in WORKDAY_SITES if s.get("remote_only") or s.get("location_keywords")]
-                    + [(scrape_icims_site, s) for s in ICIMS_SITES]
-                    + [(scrape_emory_site, s) for s in EMORY_SITES]
-                    + [(scrape_workday_site, s) for s in WORKDAY_SITES if not s.get("remote_only") and not s.get("location_keywords")]
+                    [(scrape_site, s) for s in _sites]
+                    + [(scrape_workday_site, s) for s in _workday if s.get("remote_only") or s.get("location_keywords")]
+                    + [(scrape_icims_site, s) for s in _icims]
+                    + [(scrape_emory_site, s) for s in _emory]
+                    + [(scrape_workday_site, s) for s in _workday if not s.get("remote_only") and not s.get("location_keywords")]
                 )
                 tasks = [_run_site(sem, fn, browser, site, since_date) for fn, site in ordered]
                 results = list(await asyncio.gather(*tasks))
 
-                seen_urls = _load_seen_jobs()
-                seen_record: dict[str, str] = (
+                seen_record = (
                     json.loads(SEEN_JOBS_FILE.read_text(encoding="utf-8"))
                     if SEEN_JOBS_FILE.exists() else {}
                 )
                 today_str = date.today().isoformat()
 
-                def _dedup(bucket_results):
-                    deduped = []
-                    for name, jobs, skipped, sort_warn, newest in bucket_results:
-                        fresh = []
+                if weekly:
+                    week_cutoff = (date.today() - timedelta(days=7)).isoformat()
+
+                    # All regional + remote results — no dedup filter, include seen jobs
+                    all_week = [(n, j, sk, sw, ns)
+                                for n, j, sk, sw, ns, bkt in results
+                                if bkt in ("regional", "remote")]
+
+                    # Add any new URLs found by rescrape to seen_record
+                    rescrape_urls: set[str] = set()
+                    for name, jobs, _, _, _ in all_week:
                         for j in jobs:
                             url = j.get("url", "")
-                            if url in seen_urls:
-                                _log(f"  SEEN — skipping {j.get('title','')[:60]}")
-                            else:
-                                fresh.append(j)
-                                seen_record[url] = today_str
-                        deduped.append((name, fresh, skipped, sort_warn, newest))
-                    return deduped
+                            rescrape_urls.add(url)
+                            if url not in seen_record:
+                                if _priority_score(j, name) == "primary":
+                                    seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": name}
+                                else:
+                                    seen_record[url] = today_str
 
-                main_results  = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt in ("regional", "remote")])
-                payer_results = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "payer"])
+                    # Recover primaries from seen_record this week that the rescrape missed
+                    missed_by_site: dict[str, list[dict]] = {}
+                    for url, v in seen_record.items():
+                        if (
+                            isinstance(v, dict)
+                            and v["first_seen"] >= week_cutoff
+                            and url not in rescrape_urls
+                        ):
+                            missed_by_site.setdefault(v["site"], []).append({
+                                "url": url,
+                                "title": v["title"],
+                                "date": date.fromisoformat(v["first_seen"]),
+                            })
 
-                def _has_content(bucket_results, extra_words=frozenset()):
-                    visible = sum(1 for _, jobs, _, _, _ in bucket_results
-                                  for j in jobs if not _is_excluded_title(j["title"], extra_words))
-                    return visible > 0 or any(sk or sw for _, _, sk, sw, _ in bucket_results)
+                    # Merge missed jobs back into their site slot (or append a new slot)
+                    for site_name, missed_jobs in missed_by_site.items():
+                        for i, (n, j, sk, sw, ns) in enumerate(all_week):
+                            if n == site_name:
+                                all_week[i] = (n, j + missed_jobs, sk, sw, ns)
+                                break
+                        else:
+                            all_week.append((site_name, missed_jobs, 0, False, None))
 
-                if no_email:
-                    for label, bucket, extra in [
-                        ("Main",  main_results,  frozenset()),
-                        ("Payer", payer_results, frozenset(PAYER_EXCLUDE_WORDS)),
-                    ]:
-                        if _has_content(bucket, extra):
-                            html = build_html_email(bucket, since_date, extra)
-                            out = BASE_DIR / f"preview_{label.lower()}.html"
+                    def _filter_primary(bucket_results):
+                        return [
+                            (name,
+                             [j for j in jobs
+                              if not _is_excluded_title(j["title"])
+                              and _priority_score(j, name) == "primary"],
+                             skipped, sort_warn, newest)
+                            for name, jobs, skipped, sort_warn, newest in bucket_results
+                        ]
+
+                    def _has_content(bucket_results, extra_words=frozenset()):
+                        visible = sum(1 for _, jobs, _, _, _ in bucket_results
+                                      for j in jobs if not _is_excluded_title(j["title"], extra_words))
+                        return visible > 0 or any(sk or sw for _, _, sk, sw, _ in bucket_results)
+
+                    primary_results = _filter_primary(all_week)
+                    if no_email:
+                        if _has_content(primary_results):
+                            html = build_html_email(primary_results, since_date)
+                            out = BASE_DIR / "preview_weekly.html"
                             out.write_text(html, encoding="utf-8")
                             _log(f"  --no-email: wrote {out.name}")
+                    else:
+                        if _has_content(primary_results):
+                            send_email(primary_results, since_date, label="Recap")
+                        else:
+                            _log("  Weekly recap: no primary matches this week, skipping email")
+
                 else:
-                    if _has_content(main_results):
-                        send_email(main_results, TODAY)
-                    if _has_content(payer_results, frozenset(PAYER_EXCLUDE_WORDS)):
-                        send_email(payer_results, TODAY, label="Payer", extra_words=frozenset(PAYER_EXCLUDE_WORDS))
+                    seen_urls = _load_seen_jobs()
+
+                    def _dedup(bucket_results):
+                        deduped = []
+                        for name, jobs, skipped, sort_warn, newest in bucket_results:
+                            fresh = []
+                            for j in jobs:
+                                url = j.get("url", "")
+                                if url in seen_urls:
+                                    _log(f"  SEEN — skipping {j.get('title','')[:60]}")
+                                else:
+                                    fresh.append(j)
+                                    if _priority_score(j, name) == "primary":
+                                        seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": name}
+                                    else:
+                                        seen_record[url] = today_str
+                            deduped.append((name, fresh, skipped, sort_warn, newest))
+                        return deduped
+
+                    main_results  = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt in ("regional", "remote")])
+                    payer_results = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "payer"])
+
+                    def _has_content(bucket_results, extra_words=frozenset()):
+                        visible = sum(1 for _, jobs, _, _, _ in bucket_results
+                                      for j in jobs if not _is_excluded_title(j["title"], extra_words))
+                        return visible > 0 or any(sk or sw for _, _, sk, sw, _ in bucket_results)
+
+                    if no_email:
+                        for label, bucket, extra in [
+                            ("Main",  main_results,  frozenset()),
+                            ("Payer", payer_results, frozenset(PAYER_EXCLUDE_WORDS)),
+                        ]:
+                            if _has_content(bucket, extra):
+                                html = build_html_email(bucket, since_date, extra)
+                                out = BASE_DIR / f"preview_{label.lower()}.html"
+                                out.write_text(html, encoding="utf-8")
+                                _log(f"  --no-email: wrote {out.name}")
+                    else:
+                        if _has_content(main_results):
+                            send_email(main_results, TODAY)
+                        if _has_content(payer_results, frozenset(PAYER_EXCLUDE_WORDS)):
+                            send_email(payer_results, TODAY, label="Payer", extra_words=frozenset(PAYER_EXCLUDE_WORDS))
 
             finally:
                 _save_seen_jobs(seen_record)

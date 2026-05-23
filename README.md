@@ -1,6 +1,6 @@
 # Health Job Scraper
 
-Daily job alert scraper covering 14 health system portals across Workday, Phenom, iCIMS, and DirectEmployers (Jobsyn) ATS platforms. Uses Playwright (headless Chromium) for JavaScript-rendered pages. Runs automatically via GitHub Actions and sends targeted email digests by market.
+Daily and weekly job alert scraper covering 14 health system portals across Workday, Phenom, iCIMS, and DirectEmployers (Jobsyn) ATS platforms. Uses Playwright (headless Chromium) for JavaScript-rendered pages. Runs automatically via GitHub Actions and sends targeted email digests by market.
 
 ---
 
@@ -38,14 +38,21 @@ EMAIL_APP_PASS=xxxx xxxx xxxx xxxx
 ### 3. Run locally
 
 ```
-python scraper.py
+python scraper.py               # daily run (today's new jobs)
+python scraper.py --weekly      # weekly recap (primary-only, 7-day lookback)
+python scraper.py --no-email    # write preview_*.html instead of sending
 ```
 
 ---
 
 ## GitHub Actions
 
-The workflow at `.github/workflows/scraper.yml` runs at **6:00 AM UTC** (2 AM EDT) daily and can also be triggered manually from the Actions tab.
+| Workflow | Schedule | Trigger |
+|----------|----------|---------|
+| `scraper.yml` | Daily **6:00 AM UTC** (2 AM EDT) | `workflow_dispatch` |
+| `scraper_weekly.yml` | Sunday **7:00 AM UTC** (3 AM EDT) | `workflow_dispatch` |
+
+The weekly run uses `--weekly`: 7-day lookback, primary-only scoring, sends a `[Job Alert [Recap]]` digest. It runs one hour after the daily cron on Sundays to avoid `seen_jobs.json` push conflicts.
 
 ### Required repository secrets
 
@@ -58,6 +65,21 @@ The workflow at `.github/workflows/scraper.yml` runs at **6:00 AM UTC** (2 AM ED
 ### State persistence
 
 `seen_jobs.json` is committed back to the repo after each run by the workflow bot. This deduplicates jobs across runs and prevents batch-refresh floods (e.g. Workday portals that reset all `datePosted` fields nightly). The first run after setup will include all currently active jobs; subsequent runs show only new ones.
+
+The file uses a discriminated union schema — values are either a plain date string (secondary job or pre-schema entry) or a metadata object (primary job):
+
+```json
+{
+  "https://url-secondary": "2026-05-21",
+  "https://url-primary": {
+    "first_seen": "2026-05-21",
+    "title": "Clinical Data Analyst",
+    "site": "UVA Health"
+  }
+}
+```
+
+Primary metadata is used by the weekly recap to recover jobs the rescrape may have missed (e.g. listings that expired mid-week). Both value types are pruned at 45 days.
 
 ---
 
@@ -97,7 +119,18 @@ python perf_report.py            # most recent run
 python perf_report.py --run 2    # second-most-recent run
 ```
 
-Prints a per-site table: elapsed seconds, qualifying count, skipped count, freshness. Requires at least one run after the timing instrumentation was added (May 2026).
+Prints a per-site table with columns: elapsed seconds, qualifying count, skipped count, stop reason, and freshness.
+
+Stop reason values:
+| Value | Meaning |
+|-------|---------|
+| `no_more_pages` | Paginated to natural end of results |
+| `consecutive (pN)` | 5 consecutive pages with 0 in-window jobs, stopped at page N |
+| `max_pages (pN)` | Hit the configured page cap at page N |
+| `batch_refresh` | Workday portal served all-same-date results (refresh artifact) |
+| `sort_collapsed` | Sort order failed server-side; results unreliable |
+
+Requires at least one run after the timing instrumentation was added (May 2026).
 
 ---
 
