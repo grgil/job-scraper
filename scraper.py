@@ -688,7 +688,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
 
     remote_only = site.get("remote_only", False)
     loc_kw = site.get("location_keywords", set())
-    base_url = site["url"].rstrip("/")   # externalPath is relative to site path, e.g. /MUSC/job/...
+    base_url = site["url"].split("?")[0].rstrip("/")   # externalPath is relative to site path, e.g. /MUSC/job/...
     _cxs_buf: list[dict] = []
 
     async def _on_cxs(response):
