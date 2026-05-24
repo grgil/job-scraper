@@ -582,7 +582,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
                 dp = details["date_posted"]
                 if newest_seen is None or dp > newest_seen:
                     newest_seen = dp
-                if dp == since_date:
+                if dp >= since_date:
                     loc = (details.get("location") or "").lower()
                     loc_kw = site.get("location_keywords", set())
                     is_remote = any(k in loc for k in REMOTE_LOCATION_KEYWORDS)
@@ -780,7 +780,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                         page_dates.append(dp)
                         if newest_seen is None or dp > newest_seen:
                             newest_seen = dp
-                        if dp == since_date:
+                        if dp >= since_date:
                             if is_remote:
                                 results.append({**{"title": title, "url": url}, **details})
                                 _log(f"  [p{page_num}/{i}] MATCH {dp}[r] — {title[:60]}")
@@ -802,7 +802,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     page_dates.append(dp)
                     if newest_seen is None or dp > newest_seen:
                         newest_seen = dp
-                    if dp == since_date:
+                    if dp >= since_date:
                         results.append({
                             "title": title, "url": url, "date_posted": dp,
                             "location": job.get("locationsText", ""),
@@ -823,7 +823,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     page_dates.append(dp)
                     if newest_seen is None or dp > newest_seen:
                         newest_seen = dp
-                    if dp == since_date:
+                    if dp >= since_date:
                         loc = (details.get("location") or "").lower()
                         is_remote = any(k in loc for k in REMOTE_LOCATION_KEYWORDS)
                         if remote_only:
@@ -1089,7 +1089,7 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
 
                 if newest_seen is None or dp > newest_seen:
                     newest_seen = dp
-                if dp == since_date:
+                if dp >= since_date:
                     loc_lower = location.lower()
                     is_remote = any(kw in loc_lower for kw in REMOTE_LOCATION_KEYWORDS)
                     if remote_only:
@@ -1221,9 +1221,6 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                     continue
 
                 page_had_fresh = True
-
-                if dp != since_date:
-                    continue
 
                 city_slug = f"{city.lower().replace(' ', '-')}-{state.lower()}" if city and state else "remote"
                 job_url = f"https://emory.jobs/{city_slug}/{title_slug}/{guid}/job/"
