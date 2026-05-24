@@ -15,23 +15,33 @@ Daily and weekly job alert scraper covering health system portals across Workday
 
 ### Active sites
 
-| Site | ATS | Market |
-|------|-----|--------|
-| UVA Health | Phenom | Richmond regional |
-| VCU Health | Phenom | Richmond regional |
-| Duke Health | Phenom | Remote only |
-| Bon Secours | Workday | Richmond regional |
-| Carilion Clinic | Workday | Richmond regional |
-| Prisma Health (Greenville) | Workday | Greenville SC regional |
-| Wellstar Health | Workday | Atlanta regional |
-| Atrium Health | Workday | Charlotte regional |
-| MUSC | Workday | Remote only |
-| VUMC | Workday | Remote only |
-| Sentara | Workday | Remote only |
-| Prisma Health (Remote) | Workday | Remote only |
-| Ascension | iCIMS | Remote only |
-| Emory Healthcare (Atlanta) | Jobsyn | Atlanta regional |
-| Emory Healthcare (Remote) | Jobsyn | Remote only |
+| Site | ATS | Access method | Market |
+|------|-----|--------------|--------|
+| UVA Health | Phenom | DOM + JSON-LD | Richmond regional |
+| VCU Health | Phenom | DOM + JSON-LD | Richmond regional |
+| Duke Health | Phenom | DOM + JSON-LD | Remote only |
+| Bon Secours | Workday | CXS intercept | Richmond regional |
+| Carilion Clinic | Workday | CXS intercept | Richmond regional |
+| Prisma Health (Greenville) | Workday | CXS intercept | Greenville SC regional |
+| Wellstar Health | Workday | CXS intercept | Atlanta regional |
+| Atrium Health | Workday | CXS intercept | Charlotte regional |
+| MUSC | Workday | CXS intercept | Remote only |
+| VUMC | Workday | CXS + detail pages | Remote only |
+| Sentara | Workday | CXS + detail pages | Remote only |
+| Prisma Health (Remote) | Workday | CXS + detail pages | Remote only |
+| Ascension | iCIMS | Card-embedded | Remote only |
+| Emory Healthcare (Atlanta) | Jobsyn | API intercept | Atlanta regional |
+| Emory Healthcare (Remote) | Jobsyn | API intercept | Remote only |
+
+**Access method key**
+
+| Method | How it works |
+|--------|-------------|
+| DOM + JSON-LD | Playwright reads job links from page DOM; visits each detail page for JSON-LD structured data. Used for all Phenom sites (no XHR API available). |
+| CXS intercept | Intercepts Workday's `/wday/cxs/` XHR response — returns `jobPostings[]` with title, URL, date, and `locationsText` in a single batch. No detail page visits needed. Falls back to DOM + JSON-LD if the intercept misses. |
+| CXS + detail pages | Same CXS intercept, but always visits each job's detail page afterward. Required for `remote_only=True` sites because `locationsText` in the CXS response reflects the office address, not the work arrangement — only JSON-LD reliably exposes remote/hybrid status. |
+| Card-embedded | Newer iCIMS portals (Ascension) embed date and location directly in listing cards. No detail page visits. |
+| API intercept | Intercepts the Jobsyn `prod-search-api.jobsyn.org` search response — returns full job records (title, date, location) as JSON. No page visits beyond the initial load. |
 
 ---
 
