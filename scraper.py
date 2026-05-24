@@ -562,8 +562,6 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
     try:
         links = await _get_job_links(search_page, site["url"])
         page_num = 1
-        _log(f"  {len(links)} job(s) on page {page_num}")
-
         results = []
         skipped = 0
         consecutive_empty = 0
@@ -594,9 +592,6 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
                         qualifies = True
                     if qualifies:
                         results.append({**job, **details})
-                        _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {job['title'][:60]}")
-                    else:
-                        _log(f"  [p{page_num}/{i}] SKIP  {dp} ({details.get('location')}) — {job['title'][:60]}")
                 if dp >= since_date:
                     page_matches += 1
 
@@ -751,7 +746,6 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                 _log("  No more pages")
                 break
 
-            _log(f"  {len(raw_page)} job(s) on page {page_num}")
             page_matches = 0
             page_dates: list[date] = []
 
@@ -783,9 +777,6 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                         if dp >= since_date:
                             if is_remote:
                                 results.append({**{"title": title, "url": url}, **details})
-                                _log(f"  [p{page_num}/{i}] MATCH {dp}[r] — {title[:60]}")
-                            else:
-                                _log(f"  [p{page_num}/{i}] SKIP  {dp} ({details.get('location')}) — {title[:60]}")
                         if dp >= since_date:
                             page_matches += 1
                         continue
@@ -793,7 +784,6 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     # Non-remote_only: location filter from CXS, no detail page needed
                     is_remote = any(k in cxs_loc for k in REMOTE_LOCATION_KEYWORDS)
                     if loc_kw and not any(k in cxs_loc for k in loc_kw):
-                        _log(f"  [p{page_num}/{i}] SKIP  ({job.get('locationsText')}) — {title[:60]}")
                         page_dates.append(dp)
                         if dp >= since_date:
                             page_matches += 1
@@ -808,7 +798,6 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                             "location": job.get("locationsText", ""),
                             "employment_type": "", "work_hours": "", "occupational_category": "",
                         })
-                        _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {title[:60]}")
                     if dp >= since_date:
                         page_matches += 1
 
@@ -834,9 +823,6 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                             qualifies = True
                         if qualifies:
                             results.append({**job, **details})
-                            _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {job['title'][:60]}")
-                        else:
-                            _log(f"  [p{page_num}/{i}] SKIP  {dp} ({details.get('location')}) — {job['title'][:60]}")
                     if dp >= since_date:
                         page_matches += 1
 
@@ -1040,7 +1026,6 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
         if icims_frame is None:
             return [], 0, None
         page_num = 1
-        _log(f"  {len(links)} job(s) on page {page_num}")
 
         results = []
         skipped = 0
@@ -1106,9 +1091,6 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
                             "occupational_category": occupational_category,
                             "work_hours": work_hours,
                         })
-                        _log(f"  [p{page_num}/{i}] MATCH {dp}{'[r]' if is_remote else '  '} — {job['title'][:60]}")
-                    else:
-                        _log(f"  [p{page_num}/{i}] SKIP  {dp} ({location}) — {job['title'][:60]}")
                 if dp >= since_date:
                     page_matches += 1
 
@@ -1185,7 +1167,6 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
             jobs_raw = api_data.get("jobs") or []
             pagination = api_data.get("pagination") or {}
             has_more = pagination.get("has_more_pages", False)
-            _log(f"  {len(jobs_raw)} job(s) on page {page_num}")
 
             if not jobs_raw:
                 break
@@ -1230,10 +1211,8 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
 
                 if site.get("remote_only"):
                     if not is_remote:
-                        _log(f"  SKIP  {dp} ({location}) — {raw_title[:60]}")
                         continue
                 elif loc_kw and not any(k in loc_str for k in loc_kw):
-                    _log(f"  SKIP  {dp} ({location}) — {raw_title[:60]}")
                     continue
 
                 results.append({
@@ -1245,7 +1224,6 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                     "work_hours": "",
                     "employment_type": "",
                 })
-                _log(f"  MATCH {dp}   — {raw_title[:60]}")
 
             freshness = _page_freshness(newest_seen)
             if not page_had_fresh:
@@ -1433,7 +1411,7 @@ def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
         _build_site_section(site_name, jobs, skipped, sort_warning, newest_seen, extra_words)
         for site_name, jobs, skipped, sort_warning, newest_seen in results
-        if jobs or skipped or sort_warning
+        if jobs
     )
     return f"""<!DOCTYPE html>
 <html>
@@ -1541,7 +1519,7 @@ async def main() -> None:
                 _sites        = [_weekly_site(s, multiplier=5) for s in SITES]        if weekly else SITES
                 _workday      = [_weekly_site(s) for s in WORKDAY_SITES]               if weekly else WORKDAY_SITES
                 _icims        = [_weekly_site(s) for s in ICIMS_SITES]                 if weekly else ICIMS_SITES
-                _emory        = list(EMORY_SITES)
+                _emory        = [_weekly_site(s) for s in EMORY_SITES]                 if weekly else list(EMORY_SITES)
 
                 # LPT ordering — slowest sites first so they claim the first 3 slots.
                 # Phenom (serial per-job detail fetches, minutes each) > Workday filtered
@@ -1622,6 +1600,10 @@ async def main() -> None:
                         return visible > 0 or any(sk or sw for _, _, sk, sw, _ in bucket_results)
 
                     primary_results = _filter_primary(all_week)
+                    for _name, _jobs, _, _, _ in primary_results:
+                        for _j in _jobs:
+                            if not _is_excluded_title(_j["title"]):
+                                _log(f"  WEEKLY PRIMARY ({_name}) — {_j['title'][:70]}")
                     if no_email:
                         if _has_content(primary_results):
                             html = build_html_email(primary_results, since_date)
