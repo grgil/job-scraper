@@ -26,6 +26,7 @@ Daily and weekly job alert scraper covering health system portals across Workday
 | Wellstar Health | Workday | CXS intercept | Atlanta regional |
 | Atrium Health | Workday | CXS intercept | Charlotte regional |
 | MUSC | Workday | CXS intercept | Remote only |
+| Shepherd Center | Workday | CXS intercept | Atlanta regional |
 | VUMC | Workday | CXS + detail pages | Remote only |
 | Sentara | Workday | CXS + detail pages | Remote only |
 | Prisma Health (Remote) | Workday | CXS + detail pages | Remote only |
@@ -153,6 +154,7 @@ Each site optionally pre-filters results at the portal URL before the scraper ap
 | Wellstar Health (Atlanta) | `?locations=…` ×7 | Location type — Workday location IDs for Atlanta metro |
 | Atrium Health (Charlotte) | `?locationRegionStateProvince=…&locations=…` ×24 | Location type — NC state + Charlotte-area location IDs |
 | MUSC | `?locationHierarchy1=…` | Location type — Workday hierarchy ID for remote locations |
+| Shepherd Center | none | — |
 | VUMC | `?remoteType=…` ×2 | Location type — Workday native remote/hybrid category IDs |
 | Sentara | `?q=remote` | Keyword search |
 | Prisma Health (Remote) | `?q=remote` | Keyword search |

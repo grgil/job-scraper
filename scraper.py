@@ -130,6 +130,7 @@ WORKDAY_SITES = [
                            "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson"},
      "max_pages": 8, "max_results": 15, "email_bucket": "main"},
     {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": False, "max_pages": 6, "email_bucket": "main"},
+    {"name": "Shepherd Center",           "url": "https://shepherd.wd5.myworkdayjobs.com/ShepherdCenter",                                             "remote_only": False, "email_bucket": "main"},
     {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers?remoteType=bdea8b359c5810280e51f98b08180000&remoteType=bdea8b359c5810280e51f98b08180001", "remote_only": True, "max_pages": 8, "email_bucket": "main"},
     {"name": "Sentara",                   "url": "https://sentara.wd1.myworkdayjobs.com/SCS?q=remote",                     "remote_only": True, "max_pages": 6,  "email_bucket": "main"},
     {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate?q=remote",       "remote_only": True, "max_pages": 12, "email_bucket": "main"},
@@ -271,6 +272,7 @@ PRIORITY_CONFIG: dict = {
         "Duke Health (Remote)",
         "Emory Healthcare (Atlanta)",
         "Emory Healthcare (Remote)",
+        "Shepherd Center",
     ],
     # Subset for teal color accent — no scoring difference from other preferred orgs
     "richmond_orgs": [
