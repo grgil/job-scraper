@@ -265,9 +265,106 @@ async def probe_musc_cxs() -> None:
         print(f"    {repr(v)}")
 
 
+WORKDAY_PROBE_SITES = [
+    ("Bon Secours",            "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers"),
+    ("Carilion Clinic",        "https://carilionclinic.wd12.myworkdayjobs.com/en-US/External_Careers?jobFamilyGroup=01a109d50e5f10072caa9557e5510000"),
+    ("Wellstar",               "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers?jobFamilyGroup=36c48bb8fdf710267875d93c99eb0000"),
+    ("Atrium",                 "https://aah.wd5.myworkdayjobs.com/External?jobFamilyGroup=638364634b3b1001bd1e1c9052760000"),
+    ("MUSC",                   "https://musc.wd1.myworkdayjobs.com/en-US/MUSC/jobs?jobFamily=b6f39ab6e17a1010bc655fcf712b0002"),
+    ("Shepherd Center",        "https://shepherd.wd5.myworkdayjobs.com/ShepherdCenter"),
+    ("VUMC",                   "https://vumc.wd1.myworkdayjobs.com/vumccareers?jobFamilyGroup=aa4bc8a45bec1001f06b6f977bfb0000"),
+    ("Sentara",                "https://sentara.wd1.myworkdayjobs.com/en-US/SCS?jobFamilyGroup=fb2c628a192710009e83d566e96d0000"),
+    ("Prisma Health",          "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate?jobFamilyGroup=ee936705568e0156f8bf3bd6df038fc3"),
+]
+
+
+async def _probe_one_site(browser, name: str, url: str) -> dict:
+    """Load a Workday site, trigger pagination, return CXS postedOn field status."""
+    import json as _json
+
+    cxs_jobs: list[dict] = []
+
+    async def _on_resp(response):
+        if "/wday/cxs/" in response.url and response.status == 200:
+            try:
+                body = await response.body()
+                data = _json.loads(body)
+                for job in (data.get("jobPostings") or []):
+                    cxs_jobs.append(job)
+            except Exception:
+                pass
+
+    page = await browser.new_page()
+    page.on("response", _on_resp)
+    result = {"name": name, "cxs_fired": False, "has_posted_on": None, "sample": None, "error": None}
+
+    try:
+        await page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+        await page.wait_for_timeout(4_000)
+
+        if not cxs_jobs:
+            # Try clicking Next to trigger CXS
+            try:
+                btn = page.locator('button[aria-label="next"]')
+                await btn.wait_for(state="visible", timeout=8_000)
+                await btn.click()
+                await page.wait_for_timeout(4_000)
+            except Exception:
+                pass
+
+        if cxs_jobs:
+            result["cxs_fired"] = True
+            sample_keys = list(cxs_jobs[0].keys())
+            result["has_posted_on"] = any("postedOn" in job for job in cxs_jobs)
+            result["sample"] = cxs_jobs[0].get("postedOn", "<absent>")
+            result["keys"] = sample_keys
+        else:
+            result["cxs_fired"] = False
+
+    except Exception as e:
+        result["error"] = str(e)[:80]
+    finally:
+        await page.close()
+
+    return result
+
+
+async def probe_workday_cxs() -> None:
+    """Check every active Workday site for postedOn presence in CXS responses."""
+    print(f"\n{'='*65}")
+    print(f"  Workday CXS postedOn field audit — {len(WORKDAY_PROBE_SITES)} sites")
+    print(f"{'='*65}\n")
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        # Run sequentially to avoid rate-limiting
+        results = []
+        for name, url in WORKDAY_PROBE_SITES:
+            print(f"  Probing {name} ...", flush=True)
+            r = await _probe_one_site(browser, name, url)
+            results.append(r)
+        await browser.close()
+
+    print(f"\n{'-'*65}")
+    print(f"  {'Site':<22} {'CXS fired':<12} {'postedOn':<12} {'Sample / keys'}")
+    print(f"{'-'*65}")
+    for r in results:
+        if r["error"]:
+            print(f"  {r['name']:<22} ERROR: {r['error']}")
+        elif not r["cxs_fired"]:
+            print(f"  {r['name']:<22} {'no':<12} {'—':<12} (CXS did not fire)")
+        else:
+            status = "YES" if r["has_posted_on"] else "MISSING"
+            sample = repr(r["sample"]) if r["has_posted_on"] else str(r.get("keys", ""))
+            print(f"  {r['name']:<22} {'yes':<12} {status:<12} {sample}")
+    print(f"{'-'*65}\n")
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "musc-cxs":
         asyncio.run(probe_musc_cxs())
+    elif len(sys.argv) > 1 and sys.argv[1] == "workday-cxs":
+        asyncio.run(probe_workday_cxs())
     else:
         asyncio.run(main())

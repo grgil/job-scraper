@@ -64,16 +64,49 @@ SITES = [
 ]
 
 WORKDAY_SITES = [
-    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "email_bucket": "main"},
-    {"name": "Carilion Clinic",
+    # Detail-page fetch sites first (postedOn absent in CXS) — slowest, claim slots early
+    {"name": "MUSC",
      "url": (
-         "https://carilionclinic.wd12.myworkdayjobs.com/en-US/External_Careers"
-         "?jobFamilyGroup=01a109d50e5f10072caa9557e5510000"
-         "&jobFamilyGroup=01a109d50e5f10072caa94bdafd50000"
-         "&jobFamilyGroup=01a109d50e5f10072caa9a274e930000"
-         "&jobFamilyGroup=01a109d50e5f10072caa9f9111e20000"
+         "https://musc.wd1.myworkdayjobs.com/en-US/MUSC/jobs"
+         "?jobFamily=b6f39ab6e17a1010bc655fcf712b0002"
+         "&jobFamily=b6f39ab6e17a1010bc655c33335c0001"
+         "&jobFamily=b6f39ab6e17a1010bc6550c483c10000"
+         "&jobFamily=b6f39ab6e17a1010bc65666e99430001"
+         "&jobFamily=b6f39ab6e17a1010bc6556c88b900000"
+         "&jobFamily=b6f39ab6e17a1010bc655896ac3c0001"
+         "&jobFamily=63ee0f7615fd10010766102ddb7a0000"
+         "&jobFamily=b6f39ab6e17a1010bc655f3564f60000"
+     ),
+     "max_pages": 6, "email_bucket": "main"},
+    {"name": "VUMC",
+     "url": (
+         "https://vumc.wd1.myworkdayjobs.com/vumccareers"
+         "?jobFamilyGroup=aa4bc8a45bec1001f06b6f977bfb0000"
+         "&jobFamilyGroup=aa4bc8a45bec1001f06b6a2b58be0000"
+         "&jobFamilyGroup=aa4bc8a45bec1001f06b6e6159d20000"
+         "&jobFamilyGroup=aa4bc8a45bec1001f06b685af99d0000"
+         "&jobFamilyGroup=aa4bc8a45bec1001f06b638780e10000"
+     ),
+     "max_pages": 8, "email_bucket": "main"},
+    # CXS date-exhaustion sites — fast, run after slow sites have claimed slots
+    {"name": "Prisma Health",
+     "url": (
+         "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate"
+         "?jobFamilyGroup=ee936705568e0156f8bf3bd6df038fc3"
+         "&jobFamilyGroup=ee936705568e01f28d87e2b1ae03e174"
+         "&jobFamilyGroup=ee936705568e013fff99a8b1ae03db74"
+         "&jobFamilyGroup=ee936705568e01a412a842d6df0391c3"
      ),
      "max_pages": 12, "email_bucket": "main"},
+    {"name": "Sentara",
+     "url": (
+         "https://sentara.wd1.myworkdayjobs.com/en-US/SCS"
+         "?jobFamilyGroup=fb2c628a192710009e83d566e96d0000"
+         "&jobFamilyGroup=3214b993574410009e7ab156508c0000"
+         "&jobFamilyGroup=501d9eef9f7610009e808c09d90e0000"
+         "&jobFamilyGroup=cf38025fbfe110009e80fb0da5ac0000"
+     ),
+     "max_pages": 6, "email_bucket": "main"},
     {"name": "Wellstar Health (Atlanta)",
      "url": (
          "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers"
@@ -99,48 +132,17 @@ WORKDAY_SITES = [
          "&jobFamilyGroup=1c18ea8cf0e80110c6610267df590000"
      ),
      "max_pages": 8, "email_bucket": "main"},
-    {"name": "MUSC",
+    {"name": "Carilion Clinic",
      "url": (
-         "https://musc.wd1.myworkdayjobs.com/en-US/MUSC/jobs"
-         "?jobFamily=b6f39ab6e17a1010bc655fcf712b0002"
-         "&jobFamily=b6f39ab6e17a1010bc655c33335c0001"
-         "&jobFamily=b6f39ab6e17a1010bc6550c483c10000"
-         "&jobFamily=b6f39ab6e17a1010bc65666e99430001"
-         "&jobFamily=b6f39ab6e17a1010bc6556c88b900000"
-         "&jobFamily=b6f39ab6e17a1010bc655896ac3c0001"
-         "&jobFamily=63ee0f7615fd10010766102ddb7a0000"
-         "&jobFamily=b6f39ab6e17a1010bc655f3564f60000"
-     ),
-     "max_pages": 6, "email_bucket": "main"},
-    {"name": "Shepherd Center",           "url": "https://shepherd.wd5.myworkdayjobs.com/ShepherdCenter",                                             "email_bucket": "main"},
-    {"name": "VUMC",
-     "url": (
-         "https://vumc.wd1.myworkdayjobs.com/vumccareers"
-         "?jobFamilyGroup=aa4bc8a45bec1001f06b6f977bfb0000"
-         "&jobFamilyGroup=aa4bc8a45bec1001f06b6a2b58be0000"
-         "&jobFamilyGroup=aa4bc8a45bec1001f06b6e6159d20000"
-         "&jobFamilyGroup=aa4bc8a45bec1001f06b685af99d0000"
-         "&jobFamilyGroup=aa4bc8a45bec1001f06b638780e10000"
-     ),
-     "max_pages": 8, "email_bucket": "main"},
-    {"name": "Sentara",
-     "url": (
-         "https://sentara.wd1.myworkdayjobs.com/en-US/SCS"
-         "?jobFamilyGroup=fb2c628a192710009e83d566e96d0000"
-         "&jobFamilyGroup=3214b993574410009e7ab156508c0000"
-         "&jobFamilyGroup=501d9eef9f7610009e808c09d90e0000"
-         "&jobFamilyGroup=cf38025fbfe110009e80fb0da5ac0000"
-     ),
-     "max_pages": 6, "email_bucket": "main"},
-    {"name": "Prisma Health",
-     "url": (
-         "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate"
-         "?jobFamilyGroup=ee936705568e0156f8bf3bd6df038fc3"
-         "&jobFamilyGroup=ee936705568e01f28d87e2b1ae03e174"
-         "&jobFamilyGroup=ee936705568e013fff99a8b1ae03db74"
-         "&jobFamilyGroup=ee936705568e01a412a842d6df0391c3"
+         "https://carilionclinic.wd12.myworkdayjobs.com/en-US/External_Careers"
+         "?jobFamilyGroup=01a109d50e5f10072caa9557e5510000"
+         "&jobFamilyGroup=01a109d50e5f10072caa94bdafd50000"
+         "&jobFamilyGroup=01a109d50e5f10072caa9a274e930000"
+         "&jobFamilyGroup=01a109d50e5f10072caa9f9111e20000"
      ),
      "max_pages": 12, "email_bucket": "main"},
+    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "email_bucket": "main"},
+    {"name": "Shepherd Center",           "url": "https://shepherd.wd5.myworkdayjobs.com/ShepherdCenter",                                             "email_bucket": "main"},
     # Payer / vendor — commented out; activate when payer digest is ready
     # {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
     # {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
