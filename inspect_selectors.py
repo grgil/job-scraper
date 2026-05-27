@@ -43,7 +43,7 @@ import asyncio
 from playwright.async_api import async_playwright
 
 WORKDAY_URLS: list[tuple[str, str]] = [
-    # ("Org Name", "https://tenant.wd5.myworkdayjobs.com/SiteName"),
+    # ("MUSC", "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000"),
 ]
 
 ICIMS_URLS: list[tuple[str, str]] = [
@@ -63,9 +63,11 @@ async def inspect(page, url: str, label: str) -> None:
     print(f"\n{'='*60}\n  {label}\n  URL: {url}\n{'='*60}")
 
     captured_xhr: list[str] = []
+
     async def on_response(response):
         if response.request.resource_type in ("xhr", "fetch"):
             captured_xhr.append(f"  {response.status} {response.url[:120]}")
+
     page.on("response", on_response)
 
     await page.goto(url, wait_until="networkidle", timeout=90_000)
@@ -198,5 +200,74 @@ async def main() -> None:
             await browser.close()
 
 
+async def probe_musc_cxs() -> None:
+    """Navigate MUSC page 1, click Next, capture raw CXS postedOn values from page 2."""
+    url = "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000"
+    print(f"\n{'='*60}\n  MUSC CXS postedOn probe\n{'='*60}")
+
+    cxs_bodies: list[bytes] = []
+
+    async def _on_resp(response):
+        if "/wday/cxs/" in response.url and response.status == 200:
+            try:
+                body = await response.body()
+                cxs_bodies.append(body)
+                print(f"  CXS response captured: {response.url[:100]}")
+            except Exception as e:
+                print(f"  CXS body error: {e}")
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        page.on("response", _on_resp)
+
+        print(f"  Loading page 1 ...")
+        await page.goto(url, wait_until="domcontentloaded", timeout=90_000)
+        await page.wait_for_timeout(5_000)
+        print(f"  CXS bodies after page 1: {len(cxs_bodies)}")
+
+        # Click Next to trigger a CXS page-2 request
+        try:
+            next_btn = page.locator('button[aria-label="next"]')
+            await next_btn.wait_for(state="visible", timeout=10_000)
+            print("  Clicking Next ...")
+            await next_btn.click()
+            await page.wait_for_timeout(4_000)
+            print(f"  CXS bodies after Next click: {len(cxs_bodies)}")
+        except Exception as e:
+            print(f"  Next button error: {e}")
+
+        await browser.close()
+
+    import json as _json
+    all_posted_on: list[str] = []
+    for i, body in enumerate(cxs_bodies):
+        try:
+            data = _json.loads(body)
+            postings = data.get("jobPostings") or []
+            if not postings:
+                print(f"  Body {i}: top-level keys = {list(data.keys())[:10]}")
+                continue
+            # Show first posting's full key set + sample values
+            first = postings[0]
+            print(f"  Body {i}: {len(postings)} postings, keys = {list(first.keys())}")
+            print(f"  Body {i} first posting: {_json.dumps(first, indent=2)[:600]}")
+            for job in postings:
+                v = job.get("postedOn", "")
+                if v:
+                    all_posted_on.append(v)
+        except Exception as e:
+            print(f"  Body {i}: parse error — {e}")
+
+    unique = sorted(set(all_posted_on))
+    print(f"\n  Unique postedOn values ({len(unique)}):")
+    for v in unique:
+        print(f"    {repr(v)}")
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "musc-cxs":
+        asyncio.run(probe_musc_cxs())
+    else:
+        asyncio.run(main())

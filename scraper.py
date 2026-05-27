@@ -64,76 +64,83 @@ SITES = [
 ]
 
 WORKDAY_SITES = [
-    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "remote_only": False, "email_bucket": "main"},
-    {"name": "Carilion Clinic",           "url": "https://carilionclinic.wd12.myworkdayjobs.com/External_Careers",         "remote_only": False, "max_pages": 12, "email_bucket": "main"},
-    {"name": "Prisma Health (Greenville)",
+    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "email_bucket": "main"},
+    {"name": "Carilion Clinic",
      "url": (
-         "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate"
-         "?primaryLocation=e318c8ece20410011031feb5b1700000"
-         "&primaryLocation=e37e7eee17f201fd2dbe770fa3025b68"
-         "&primaryLocation=e37e7eee17f201efc35d3922a30296cf"
-         "&primaryLocation=e37e7eee17f201877094131ca302bead"
-         "&primaryLocation=e37e7eee17f2017c97cc2920a30210c4"
-         "&primaryLocation=e37e7eee17f201bf0a16a018a302b89a"
-         "&primaryLocation=e37e7eee17f2015e77434a20a302cac4"
-         "&primaryLocation=e37e7eee17f20180a9a8df15a302838b"
-         "&primaryLocation=e37e7eee17f201be7d783517a302d792"
-         "&primaryLocation=42bc1918b2651001b5fd4cd4d56e0000"
-         "&primaryLocation=e37e7eee17f2010423e8b218a302299b"
-         "&primaryLocation=e37e7eee17f2016294c6d71fa30274c2"
+         "https://carilionclinic.wd12.myworkdayjobs.com/en-US/External_Careers"
+         "?jobFamilyGroup=01a109d50e5f10072caa9557e5510000"
+         "&jobFamilyGroup=01a109d50e5f10072caa94bdafd50000"
+         "&jobFamilyGroup=01a109d50e5f10072caa9a274e930000"
+         "&jobFamilyGroup=01a109d50e5f10072caa9f9111e20000"
      ),
-     "location_keywords": {"greenville", "simpsonville", "easley", "greer", "travelers rest", "powdersville", "laurens"},
-     "max_pages": 8, "email_bucket": "main"},
+     "max_pages": 12, "email_bucket": "main"},
     {"name": "Wellstar Health (Atlanta)",
      "url": (
          "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers"
-         "?locations=ed12bf55a64c102860663cc682a90000"
-         "&locations=ed12bf55a64c10286060c90d07510000"
-         "&locations=ed12bf55a64c10286066440c69520000"
-         "&locations=ed12bf55a64c102860662661db030000"
-         "&locations=ed12bf55a64c102860664c88ced20000"
-         "&locations=ed12bf55a64c1028606634e7ed5e0000"
-         "&locations=ed12bf55a64c102860da168d7df60000"
+         "?jobFamilyGroup=36c48bb8fdf710267875d93c99eb0000"
+         "&jobFamilyGroup=36c48bb8fdf710267875de0dc37f0000"
+         "&jobFamilyGroup=36c48bb8fdf710267875dc3f210e0000"
+         "&jobFamilyGroup=36c48bb8fdf710267875d63a6e820000"
+         "&jobFamilyGroup=36c48bb8fdf710267875d50610d30000"
+         "&jobFamilyGroup=36c48bb8fdf7102678759eded26a0001"
+         "&jobFamilyGroup=36c48bb8fdf710267875dea8593e0000"
      ),
-     "location_keywords": {"atlanta", "marietta", "smyrna", "kennesaw", "woodstock", "cartersville", "douglasville", "newnan", "austell", "acworth"},
      "max_pages": 8, "email_bucket": "main"},
     {"name": "Atrium Health (Charlotte)",
      "url": (
          "https://aah.wd5.myworkdayjobs.com/External"
-         "?locationRegionStateProvince=1486a0a4a8464c3b9ec482d4038deb99"
-         "&locations=3da15923432b1012827a63e412ea0000"
-         "&locations=958ab7fbc39a10128274bc9f42850000"
-         "&locations=f60d2e9a642610128276987733930000"
-         "&locations=20d78ee849f2101282726ccf36990000"
-         "&locations=fce93e421e8b1001105ac6ccab410000"
-         "&locations=9d01e0c50b551012826bcddb3e8e0000"
-         "&locations=9588b884a5fc1012826ce70f13ea0000"
-         "&locations=447dae7df7bc1012826d570d6fec0000"
-         "&locations=b4a5f3cd97131012826bb184060b0000"
-         "&locations=958ab7fbc39a101282769f3ba3660000"
-         "&locations=958ab7fbc39a10128275fe57bb570000"
-         "&locations=3da15923432b10128278e0d1f9170000"
-         "&locations=6dcfb27e577c10128275c50970c90000"
-         "&locations=447dae7df7bc10128278d2b781d40000"
-         "&locations=6af6cfb37edc101282775b559c8a0000"
-         "&locations=f60d2e9a64261012826d3c135e980000"
-         "&locations=9d01e0c50b551012826ddcfbc8b00000"
-         "&locations=20d78ee849f21012826cf53a58290000"
-         "&locations=47b1707d32ff1016deeba49fdc380000"
-         "&locations=b4a5f3cd97131012827da4294ec00000"
-         "&locations=47b1707d32ff1016deeb946e28cd0000"
-         "&locations=958ab7fbc39a10128278783cd90e0000"
-         "&locations=b4a5f3cd97131012828361b991b90000"
-         "&locations=43dd0d7469391012828428e9f7d60000"
+         "?jobFamilyGroup=638364634b3b1001bd1e1c9052760000"
+         "&jobFamilyGroup=1c18ea8cf0e80110c66748713bf70000"
+         "&jobFamilyGroup=1c18ea8cf0e80110c66470a390fe0000"
+         "&jobFamilyGroup=1c18ea8cf0e80110c667016009800000"
+         "&jobFamilyGroup=1c18ea8cf0e80110c6631d7636600000"
+         "&jobFamilyGroup=1c18ea8cf0e80110c6640728c9720000"
+         "&jobFamilyGroup=1c18ea8cf0e80110c66793b407520000"
+         "&jobFamilyGroup=1c18ea8cf0e80110c6610267df590000"
      ),
-     "location_keywords": {"charlotte", "concord", "gastonia", "rock hill", "matthews", "huntersville",
-                           "mooresville", "kannapolis", "mint hill", "belmont", "cornelius", "davidson"},
-     "max_pages": 8, "max_results": 15, "email_bucket": "main"},
-    {"name": "MUSC",                      "url": "https://musc.wd1.myworkdayjobs.com/MUSC?locationHierarchy1=b6f39ab6e17a1010ca272712938e0000", "remote_only": False, "max_pages": 6, "email_bucket": "main"},
-    {"name": "Shepherd Center",           "url": "https://shepherd.wd5.myworkdayjobs.com/ShepherdCenter",                                             "remote_only": False, "email_bucket": "main"},
-    {"name": "VUMC",                      "url": "https://vumc.wd1.myworkdayjobs.com/vumccareers?remoteType=bdea8b359c5810280e51f98b08180000&remoteType=bdea8b359c5810280e51f98b08180001", "remote_only": True, "max_pages": 8, "email_bucket": "main"},
-    {"name": "Sentara",                   "url": "https://sentara.wd1.myworkdayjobs.com/SCS?q=remote",                     "remote_only": True, "max_pages": 6,  "email_bucket": "main"},
-    {"name": "Prisma Health (Remote)",    "url": "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate?q=remote",       "remote_only": True, "max_pages": 12, "email_bucket": "main"},
+     "max_pages": 8, "email_bucket": "main"},
+    {"name": "MUSC",
+     "url": (
+         "https://musc.wd1.myworkdayjobs.com/en-US/MUSC/jobs"
+         "?jobFamily=b6f39ab6e17a1010bc655fcf712b0002"
+         "&jobFamily=b6f39ab6e17a1010bc655c33335c0001"
+         "&jobFamily=b6f39ab6e17a1010bc6550c483c10000"
+         "&jobFamily=b6f39ab6e17a1010bc65666e99430001"
+         "&jobFamily=b6f39ab6e17a1010bc6556c88b900000"
+         "&jobFamily=b6f39ab6e17a1010bc655896ac3c0001"
+         "&jobFamily=63ee0f7615fd10010766102ddb7a0000"
+         "&jobFamily=b6f39ab6e17a1010bc655f3564f60000"
+     ),
+     "max_pages": 6, "email_bucket": "main"},
+    {"name": "Shepherd Center",           "url": "https://shepherd.wd5.myworkdayjobs.com/ShepherdCenter",                                             "email_bucket": "main"},
+    {"name": "VUMC",
+     "url": (
+         "https://vumc.wd1.myworkdayjobs.com/vumccareers"
+         "?jobFamilyGroup=aa4bc8a45bec1001f06b6f977bfb0000"
+         "&jobFamilyGroup=aa4bc8a45bec1001f06b6a2b58be0000"
+         "&jobFamilyGroup=aa4bc8a45bec1001f06b6e6159d20000"
+         "&jobFamilyGroup=aa4bc8a45bec1001f06b685af99d0000"
+         "&jobFamilyGroup=aa4bc8a45bec1001f06b638780e10000"
+     ),
+     "max_pages": 8, "email_bucket": "main"},
+    {"name": "Sentara",
+     "url": (
+         "https://sentara.wd1.myworkdayjobs.com/en-US/SCS"
+         "?jobFamilyGroup=fb2c628a192710009e83d566e96d0000"
+         "&jobFamilyGroup=3214b993574410009e7ab156508c0000"
+         "&jobFamilyGroup=501d9eef9f7610009e808c09d90e0000"
+         "&jobFamilyGroup=cf38025fbfe110009e80fb0da5ac0000"
+     ),
+     "max_pages": 6, "email_bucket": "main"},
+    {"name": "Prisma Health",
+     "url": (
+         "https://prismahealth.wd5.myworkdayjobs.com/PrismaHealthCorporate"
+         "?jobFamilyGroup=ee936705568e0156f8bf3bd6df038fc3"
+         "&jobFamilyGroup=ee936705568e01f28d87e2b1ae03e174"
+         "&jobFamilyGroup=ee936705568e013fff99a8b1ae03db74"
+         "&jobFamilyGroup=ee936705568e01a412a842d6df0391c3"
+     ),
+     "max_pages": 12, "email_bucket": "main"},
     # Payer / vendor — commented out; activate when payer digest is ready
     # {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
     # {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
@@ -369,7 +376,8 @@ def _parse_posted_on(s: str) -> date | None:
     m = re.search(r"(\d+)\+?\s*day", t)
     if m:
         return date.today() - timedelta(days=int(m.group(1)))
-    return date.today()
+    _log(f"  WARN — unrecognized postedOn format: {s!r}")
+    return None
 
 
 def _rotate_log() -> None:
@@ -685,7 +693,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
 
     remote_only = site.get("remote_only", False)
     loc_kw = site.get("location_keywords", set())
-    base_url = site["url"].split("?")[0].rstrip("/")   # externalPath is relative to site path, e.g. /MUSC/job/...
+    base_url = re.sub(r"/jobs$", "", site["url"].split("?")[0].rstrip("/"))  # externalPath is relative to tenant root, e.g. /job/...
     _cxs_buf: list[dict] = []
 
     async def _on_cxs(response):
@@ -760,7 +768,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                         continue
                     url = base_url + ext_path
                     cxs_loc = (job.get("locationsText") or "").lower()
-                    dp = _parse_posted_on(job.get("postedOn", "")) or since_date
+                    cxs_dp = _parse_posted_on(job.get("postedOn", ""))
 
                     if remote_only:
                         # CXS locationsText is the office address, not work arrangement —
@@ -783,9 +791,22 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                             page_matches += 1
                         continue
 
-                    # Non-remote_only: location filter from CXS, no detail page needed
-                    is_remote = any(k in cxs_loc for k in REMOTE_LOCATION_KEYWORDS)
-                    if loc_kw and not any(k in cxs_loc for k in loc_kw):
+                    # Non-remote_only CXS path.
+                    # If CXS omitted postedOn (e.g. MUSC tenant), fetch the detail page for
+                    # the real date rather than defaulting every job to since_date.
+                    if cxs_dp is None:
+                        details = await _get_job_details(detail_page, url)
+                        if details is None:
+                            _log(f"  [p{page_num}/{i}] No JSON-LD — {title[:60]}")
+                            skipped += 1
+                            continue
+                        dp = details["date_posted"]
+                        loc = (details.get("location") or "").lower()
+                    else:
+                        dp = cxs_dp
+                        loc = cxs_loc
+
+                    if loc_kw and not any(k in loc for k in loc_kw):
                         page_dates.append(dp)
                         if dp >= since_date:
                             page_matches += 1
@@ -795,11 +816,12 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     if newest_seen is None or dp > newest_seen:
                         newest_seen = dp
                     if dp >= since_date:
-                        results.append({
-                            "title": title, "url": url, "date_posted": dp,
-                            "location": job.get("locationsText", ""),
-                            "employment_type": "", "work_hours": "", "occupational_category": "",
-                        })
+                        entry = {"title": title, "url": url, "date_posted": dp,
+                                 "location": job.get("locationsText", ""),
+                                 "employment_type": "", "work_hours": "", "occupational_category": ""}
+                        if cxs_dp is None and details:
+                            entry.update({k: details[k] for k in ("employment_type", "work_hours", "occupational_category") if k in details})
+                        results.append(entry)
                     if dp >= since_date:
                         page_matches += 1
 
@@ -1507,8 +1529,8 @@ async def main() -> None:
                 sem = asyncio.Semaphore(3)
 
                 # For weekly runs, scale up page caps (the consecutive_empty stop is the
-                # real terminator; max_pages is just a daily safety net). Also drop the
-                # Atrium max_results cap which is only needed to guard daily batch-refresh.
+                # real terminator; max_pages is just a daily safety net). Also drop any
+                # max_results caps (batch-refresh guards not needed for 7-day lookback).
                 # Phenom gets 5× (serial per-job fetches are slow so UVA/Duke run deep);
                 # Workday + iCIMS get 3× (batch page loads, faster to paginate).
                 def _weekly_site(s: dict, multiplier: int = 3) -> dict:
@@ -1524,15 +1546,14 @@ async def main() -> None:
                 _emory        = [_weekly_site(s) for s in EMORY_SITES]                 if weekly else list(EMORY_SITES)
 
                 # LPT ordering — slowest sites first so they claim the first 3 slots.
-                # Phenom (serial per-job detail fetches, minutes each) > Workday filtered
-                # (CXS intercept, seconds/page) > Emory/iCIMS (API intercept, very fast) >
-                # Workday unfiltered (quick date-exhaustion stop).
+                # Phenom (serial per-job detail fetches, minutes each) >
+                # iCIMS/Emory (API intercept, very fast) >
+                # Workday (jobFamily-filtered CXS, quick date-exhaustion stop).
                 ordered = (
                     [(scrape_site, s) for s in _sites]
-                    + [(scrape_workday_site, s) for s in _workday if s.get("remote_only") or s.get("location_keywords")]
                     + [(scrape_icims_site, s) for s in _icims]
                     + [(scrape_emory_site, s) for s in _emory]
-                    + [(scrape_workday_site, s) for s in _workday if not s.get("remote_only") and not s.get("location_keywords")]
+                    + [(scrape_workday_site, s) for s in _workday]
                 )
                 tasks = [_run_site(sem, fn, browser, site, since_date) for fn, site in ordered]
                 results = list(await asyncio.gather(*tasks))
