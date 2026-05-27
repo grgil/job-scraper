@@ -1528,7 +1528,7 @@ async def main() -> None:
             _log("Browser ready")
             seen_record: dict[str, str] = {}
             try:
-                sem = asyncio.Semaphore(3)
+                sem = asyncio.Semaphore(4)
 
                 # For weekly runs, scale up page caps (the consecutive_empty stop is the
                 # real terminator; max_pages is just a daily safety net). Also drop any
