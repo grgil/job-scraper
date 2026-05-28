@@ -11,36 +11,34 @@ Daily and weekly job alert scraper covering health system portals across Workday
 | **Main** | All active sites — one digest regardless of remote or on-site scope |
 | **Payer** | Humana, Elevance, Cigna, Solventum, Veradigm, Waystar *(commented out — activate when ready)* |
 
-`email_bucket` on each site config is `"main"` or `"payer"`. `remote_only=True` controls scraping behavior; `email_bucket` controls which digest the results route to.
+`email_bucket` on each site config is `"main"` or `"payer"` and controls which digest the results route to. `remote_only=True` and `location_keywords` are post-scrape filters; `categories` (Phenom) and URL-level params (Workday/iCIMS) are pre-scrape filters.
 
 ### Active sites
 
-| Site | ATS | Access method | Market |
+| Site | ATS | Access method | Filter |
 |------|-----|--------------|--------|
-| UVA Health | Phenom | DOM + JSON-LD | Richmond regional |
-| VCU Health | Phenom | DOM + JSON-LD | Richmond regional |
-| Duke Health | Phenom | DOM + JSON-LD | Remote only |
-| Bon Secours | Workday | CXS intercept | Richmond regional |
-| Carilion Clinic | Workday | CXS intercept | Richmond regional |
-| Prisma Health (Greenville) | Workday | CXS intercept | Greenville SC regional |
-| Wellstar Health | Workday | CXS intercept | Atlanta regional |
-| Atrium Health | Workday | CXS intercept | Charlotte regional |
-| MUSC | Workday | CXS intercept | Remote only |
-| Shepherd Center | Workday | CXS intercept | Atlanta regional |
-| VUMC | Workday | CXS + detail pages | Remote only |
-| Sentara | Workday | CXS + detail pages | Remote only |
-| Prisma Health (Remote) | Workday | CXS + detail pages | Remote only |
-| Ascension | iCIMS | Card-embedded | Remote only |
-| Emory Healthcare (Atlanta) | Jobsyn | API intercept | Atlanta regional |
-| Emory Healthcare (Remote) | Jobsyn | API intercept | Remote only |
+| UVA Health | Phenom | DOM + JSON-LD | Category facet (5 categories) |
+| VCU Health | Phenom | DOM + JSON-LD | Category facet (6 categories) |
+| Duke Health | Phenom | DOM + JSON-LD | Category facet (7 categories) |
+| Bon Secours | Workday | CXS intercept | None — full site |
+| Carilion Clinic | Workday | CXS intercept | `jobFamilyGroup` ×4 |
+| Prisma Health | Workday | CXS intercept | `jobFamilyGroup` ×4 |
+| Wellstar Health | Workday | CXS intercept | `jobFamilyGroup` ×7 |
+| Atrium Health | Workday | CXS intercept | `jobFamilyGroup` ×8 |
+| MUSC | Workday | CXS + detail pages | `jobFamily` ×8 |
+| VUMC | Workday | CXS + detail pages | `jobFamilyGroup` ×5 |
+| Sentara | Workday | CXS intercept | `jobFamilyGroup` ×4 |
+| Shepherd Center | Workday | CXS intercept | None — small site |
+| Ascension | iCIMS | Card-embedded | `searchCategory` ×3 |
+| Emory Healthcare | Jobsyn | API intercept | None — full site |
 
 **Access method key**
 
 | Method | How it works |
 |--------|-------------|
-| DOM + JSON-LD | Playwright reads job links from page DOM; visits each detail page for JSON-LD structured data. Used for all Phenom sites (no XHR API available). |
+| DOM + JSON-LD | Playwright reads job links from page DOM; visits each detail page for JSON-LD structured data. Used for all Phenom sites (no XHR API available). Category facet filters are applied by clicking `[data-ph-at-id="facet-results-item"]` elements before link extraction — Phenom stores these as `selected_fields.category[]` in a POST body, not URL params. |
 | CXS intercept | Intercepts Workday's `/wday/cxs/` XHR response — returns `jobPostings[]` with title, URL, date, and `locationsText` in a single batch. No detail page visits needed. Falls back to DOM + JSON-LD if the intercept misses. |
-| CXS + detail pages | Same CXS intercept, but always visits each job's detail page afterward. Required for `remote_only=True` sites because `locationsText` in the CXS response reflects the office address, not the work arrangement — only JSON-LD reliably exposes remote/hybrid status. |
+| CXS + detail pages | Same CXS intercept, but visits each job's detail page for the real `datePosted`. Required for MUSC and VUMC (`wd1` Workday tenant) which omit `postedOn` from CXS responses entirely. |
 | Card-embedded | Newer iCIMS portals (Ascension) embed date and location directly in listing cards. No detail page visits. |
 | API intercept | Intercepts the Jobsyn `prod-search-api.jobsyn.org` search response — returns full job records (title, date, location) as JSON. No page visits beyond the initial load. |
 
@@ -125,43 +123,49 @@ Primary metadata is used by the weekly recap to recover jobs the rescrape may ha
    - iCIMS → `ICIMS_SITES`
    - DirectEmployers/Jobsyn → `EMORY_SITES`
 3. Set `email_bucket` to `"main"` or `"payer"`
-4. Set `remote_only=True` or `location_keywords={...}` as needed
+4. Set filters as appropriate (see decision framework below)
 
 **Decision framework:**
 
-| Org type | `remote_only` | `location_keywords` | `email_bucket` | Notes |
-|----------|--------------|---------------------|----------------|-------|
-| Payer / vendor | `True` | — | `"payer"` | Comment out until payer digest is activated |
-| Health system in target metro | `False` | city set | `"main"` | URL location filter + keywords = two-pass |
-| Health system outside target metros | `True` | — | `"main"` | remote_only handles the filtering |
-| Spans both | — | — | `"main"` | Two entries: one with location_keywords, one with remote_only=True |
+| Org type | Filter approach | `email_bucket` | Notes |
+|----------|----------------|----------------|-------|
+| Payer / vendor | `remote_only=True` | `"payer"` | Comment out until payer digest is activated |
+| Workday — broad site | `jobFamily` / `jobFamilyGroup` URL params | `"main"` | Extract IDs from portal UI facet URLs |
+| Phenom — category filter available | `categories: [...]` list | `"main"` | Run `inspect_selectors.py phenom-categories` to probe; values are exact human-readable strings |
+| iCIMS — category filter available | `urls: [...]` list with `searchCategory` params | `"main"` | One URL per category (single-select dropdown) |
+| Health system in target metro | `location_keywords={...}` | `"main"` | Post-filter on city strings from JSON-LD |
+| Health system outside target metros | `remote_only=True` | `"main"` | Post-filter on location keywords |
 
 ---
 
 ## URL-level filtering
 
-Each site optionally pre-filters results at the portal URL before the scraper applies its own post-filters (`remote_only`, `location_keywords`). Two filter types are used:
+Each site optionally pre-filters results before the scraper applies its own post-filters. Three filter mechanisms are used:
 
-**Location type** — platform-native location IDs extracted from the Workday or iCIMS UI. Exact match against a specific location entity; stable long-term.
+**Workday jobFamily / jobFamilyGroup** — opaque hash IDs extracted from the Workday portal UI facet URLs. Appended as repeated query params (`?jobFamilyGroup=…&jobFamilyGroup=…`). Stable long-term; re-extract from the portal URL if a site stops returning expected results.
 
-**Keyword search** — `?q=` parameter matching text in job title or description. Used only when no location-type filter was available for a given tenant. Fuzzier — may surface false positives (e.g. "Remote Patient Monitoring Tech" matching `?q=remote`); `remote_only=True` catches these in the post-filter.
+**iCIMS searchCategory** — category ID appended as `?searchCategory=…`. Single-select only; multiple categories require separate `urls` entries in the site config.
 
-| Site | URL filter | Type |
-|------|-----------|------|
-| UVA Health, VCU Health, Duke Health | `?sortBy=postingdate&descending=true` | Sort only |
-| Bon Secours, Carilion | none | — |
-| Prisma Health (Greenville) | `?primaryLocation=…` ×12 | Location type — Workday location IDs for Greenville area |
-| Wellstar Health (Atlanta) | `?locations=…` ×7 | Location type — Workday location IDs for Atlanta metro |
-| Atrium Health (Charlotte) | `?locationRegionStateProvince=…&locations=…` ×24 | Location type — NC state + Charlotte-area location IDs |
-| MUSC | `?locationHierarchy1=…` | Location type — Workday hierarchy ID for remote locations |
+**Phenom category facets** — Phenom does not expose category filters as URL params. The scraper clicks `[data-ph-at-id="facet-results-item"]` facet items using Playwright before extracting links; Phenom fires a POST to `/widgets` with `selected_fields.category[]` in the body. Category values are exact human-readable strings. Run `python inspect_selectors.py phenom-categories` to probe available categories and confirm click behavior.
+
+| Site | Filter | Type |
+|------|--------|------|
+| UVA Health | 5 category facets | Phenom POST |
+| VCU Health | 6 category facets | Phenom POST |
+| Duke Health | 7 category facets | Phenom POST |
+| Bon Secours | none | — |
+| Carilion Clinic | `jobFamilyGroup` ×4 | Workday |
+| Prisma Health | `jobFamilyGroup` ×4 | Workday |
+| Wellstar Health | `jobFamilyGroup` ×7 | Workday |
+| Atrium Health | `jobFamilyGroup` ×8 | Workday |
+| MUSC | `jobFamily` ×8 | Workday |
+| VUMC | `jobFamilyGroup` ×5 | Workday |
+| Sentara | `jobFamilyGroup` ×4 | Workday |
 | Shepherd Center | none | — |
-| VUMC | `?remoteType=…` ×2 | Location type — Workday native remote/hybrid category IDs |
-| Sentara | `?q=remote` | Keyword search |
-| Prisma Health (Remote) | `?q=remote` | Keyword search |
-| Ascension | `?searchLocation=--Remote` | Location type — iCIMS native remote location value |
-| Emory Healthcare | none | — (post-filter via `location_keywords` or `remote_only`) |
+| Ascension | `searchCategory` ×3 | iCIMS |
+| Emory Healthcare | none | — |
 
-**Note on Workday CXS sort:** Workday's CXS API (the XHR endpoint the scraper intercepts) does not expose a sort-by-date parameter. Injecting a `"sort"` field into the POST body is silently ignored. Date ordering relies on the `consecutive_empty` stopping mechanism — the scraper stops after 5 consecutive pages with no in-window jobs.
+**Note on Workday CXS sort:** Workday's CXS API does not expose a sort-by-date parameter. Date ordering relies on the `consecutive_empty` stopping mechanism — the scraper stops after 5 consecutive pages with no in-window jobs.
 
 ---
 

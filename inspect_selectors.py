@@ -360,11 +360,172 @@ async def probe_workday_cxs() -> None:
     print(f"{'-'*65}\n")
 
 
+PHENOM_PROBE_SITES = [
+    ("UVA Health",  "https://careers.uvahealth.org/us/en/search-results?sortBy=postingdate&descending=true"),
+    ("VCU Health",  "https://careers.vcuhealth.org/us/en/search-results?sortBy=postingdate&descending=true"),
+    ("Duke Health", "https://careers.dukehealth.org/us/en/search-results?sortBy=postingdate&descending=true"),
+]
+
+# Partial-match strings — probe clicks the first facet item whose text contains one of these.
+# Keep them specific enough to avoid false matches.
+PHENOM_TARGET_CATEGORIES = {
+    "UVA Health": [
+        "Finance",
+        "Business",
+        "Information Management",
+        "Services",
+        "Research",
+        "Safety",
+        "Compliance",
+        "Regulatory",
+    ],
+    "VCU Health": [
+        "Revenue Cycle",
+        "Information Technology",
+        "Health System",
+        "Quality",
+        "Administrative Support",
+    ],
+    "Duke Health": [
+        "Corporate",
+        "Information Technology",
+        "Revenue Management",
+        "Administrative and Support",
+    ],
+}
+
+_FACET_JS = """() => {
+    // Expand any collapsed "Show more" / "View all" facet buttons first
+    document.querySelectorAll('[data-ph-at-id*="facet"] button, [data-ph-at-id*="facet"] a').forEach(el => {
+        const t = (el.innerText || el.textContent || '').toLowerCase();
+        if (t.includes('show') || t.includes('view') || t.includes('more') || t.includes('all')) {
+            try { el.click(); } catch {}
+        }
+    });
+    // Collect all facet-results-item LIs with their text and any href
+    return [...document.querySelectorAll('[data-ph-at-id="facet-results-item"]')].map(el => {
+        const raw = (el.innerText || el.textContent || '').trim().replace(/\\s+/g, ' ');
+        const clean = raw.replace(/\\(\\d+\\+?\\)\\s*jobs?/gi, '').trim();
+        const a = el.querySelector('a');
+        return {
+            raw,
+            clean,
+            href: (a && a.href && !a.href.endsWith('#')) ? a.href : null,
+        };
+    });
+}"""
+
+
+async def probe_phenom_categories() -> None:
+    """Click each target category facet using a real Playwright click and capture:
+      - Any href on the facet <a> link (usable directly as a scraper URL)
+      - The POST body sent to /widgets (reveals category field name + value)
+      - Whether the page URL changes (query param approach)
+
+    Run with: python inspect_selectors.py phenom-categories
+    """
+    import json as _json
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+
+        for name, base_url in PHENOM_PROBE_SITES:
+            targets = PHENOM_TARGET_CATEGORIES.get(name, [])
+            print(f"\n{'='*65}\n  {name}\n{'='*65}")
+
+            page = await browser.new_page()
+            widget_requests: list[dict] = []
+
+            async def _on_req(req, _cap=widget_requests):
+                if req.resource_type in ("xhr", "fetch") and "/widgets" in req.url:
+                    try:
+                        body = req.post_data or ""
+                    except Exception:
+                        body = ""
+                    _cap.append({"method": req.method, "url": req.url[:100], "body": body})
+
+            page.on("request", _on_req)
+            await page.goto(base_url, wait_until="networkidle", timeout=90_000)
+            await page.wait_for_timeout(2_000)
+            widget_requests.clear()
+
+            # Full facet list (no truncation) — also tries to expand "show more"
+            all_facets = await page.evaluate(_FACET_JS)
+            print(f"\n  All category facet items ({len(all_facets)}):")
+            for f in all_facets:
+                href_note = f"  → {f['href']}" if f["href"] else ""
+                print(f"    '{f['clean']}'{href_note}")
+
+            # Click each target category in turn
+            for target in targets:
+                match = next(
+                    (f for f in all_facets if target.lower() in f["clean"].lower()),
+                    None,
+                )
+                if not match:
+                    print(f"\n  [{target}] — NOT FOUND in facet list")
+                    continue
+
+                # If the <a> has a real href, report it and skip the click
+                if match["href"]:
+                    print(f"\n  [{target}] — has href: {match['href']}")
+                    continue
+
+                # Real Playwright click — fires React event handlers
+                widget_requests.clear()
+                print(f"\n  [{target}] clicking '{match['clean']}' ...")
+                try:
+                    locator = page.locator('[data-ph-at-id="facet-results-item"]').filter(has_text=target)
+                    await locator.first.scroll_into_view_if_needed(timeout=5_000)
+                    await locator.first.click(timeout=8_000)
+                    await page.wait_for_timeout(3_500)
+
+                    if widget_requests:
+                        for r in widget_requests:
+                            print(f"    POST {r['url']}")
+                            if r["body"]:
+                                try:
+                                    parsed = _json.loads(r["body"])
+                                    print(f"    body: {_json.dumps(parsed, indent=6)[:800]}")
+                                except Exception:
+                                    print(f"    body (raw): {r['body'][:400]}")
+                    else:
+                        print(f"    (no /widgets POST fired)")
+
+                    if page.url != base_url:
+                        print(f"    URL changed: {page.url}")
+
+                    # Deselect and reset for next target
+                    widget_requests.clear()
+                    try:
+                        await locator.first.click(timeout=4_000)
+                        await page.wait_for_timeout(2_000)
+                        widget_requests.clear()
+                    except Exception:
+                        await page.goto(base_url, wait_until="networkidle", timeout=60_000)
+                        await page.wait_for_timeout(2_000)
+                        widget_requests.clear()
+                        all_facets = await page.evaluate(_FACET_JS)
+
+                except Exception as e:
+                    print(f"    click error: {e}")
+                    await page.goto(base_url, wait_until="networkidle", timeout=60_000)
+                    await page.wait_for_timeout(2_000)
+                    widget_requests.clear()
+                    all_facets = await page.evaluate(_FACET_JS)
+
+            await page.close()
+
+        await browser.close()
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "musc-cxs":
         asyncio.run(probe_musc_cxs())
     elif len(sys.argv) > 1 and sys.argv[1] == "workday-cxs":
         asyncio.run(probe_workday_cxs())
+    elif len(sys.argv) > 1 and sys.argv[1] == "phenom-categories":
+        asyncio.run(probe_phenom_categories())
     else:
         asyncio.run(main())

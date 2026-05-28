@@ -40,6 +40,13 @@ SITES = [
             "https://careers.uvahealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
+        "categories": [
+            "Finance, Business & Human Resources",
+            "Information Management, Services & Technology",
+            "Research",
+            "Safety, Compliance, Regulatory, & Privacy",
+            "Managerial & Supervisory",
+        ],
         "max_pages": 20,
         "email_bucket": "main",
     },
@@ -49,15 +56,31 @@ SITES = [
             "https://careers.vcuhealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
+        "categories": [
+            "Revenue Cycle",
+            "Information Technology",
+            "Health System Management/Operations",
+            "Quality & Safety",
+            "Administrative Support",
+            "Finance",
+        ],
         "email_bucket": "main",
     },
     {
-        "name": "Duke Health (Remote)",
+        "name": "Duke Health",
         "url": (
             "https://careers.dukehealth.org/us/en/search-results"
             "?sortBy=postingdate&descending=true"
         ),
-        "remote_only": True,
+        "categories": [
+            "Corporate",
+            "Information Technology",
+            "Revenue Management",
+            "Administrative and Support Services",
+            "Population Health",
+            "Patient Quality and Safety",
+            "Revenue Cycle",
+        ],
         "max_pages": 12,
         "email_bucket": "main",
     },
@@ -278,9 +301,8 @@ PRIORITY_CONFIG: dict = {
         "VCU Health",
         "Bon Secours",
         "VUMC",
-        "Duke Health (Remote)",
-        "Emory Healthcare (Atlanta)",
-        "Emory Healthcare (Remote)",
+        "Duke Health",
+        "Emory Healthcare",
         "Shepherd Center",
     ],
     # Subset for teal color accent — no scoring difference from other preferred orgs
@@ -295,9 +317,12 @@ PRIORITY_CONFIG: dict = {
 # iCIMS ATS
 ICIMS_SITES: list[dict] = [
     {
-        "name": "Ascension (Remote)",
-        "url": "https://ascensionjobs1-ascension.icims.com/jobs/search?ss=1&searchRelation=keyword_all&searchLocation=--Remote",
-        "remote_only": True,
+        "name": "Ascension",
+        "urls": [
+            "https://ascensionjobs1-ascension.icims.com/jobs/search?ss=1&searchRelation=keyword_all&searchCategory=27586",
+            "https://ascensionjobs1-ascension.icims.com/jobs/search?ss=1&searchRelation=keyword_all&searchCategory=27616",
+            "https://ascensionjobs1-ascension.icims.com/jobs/search?ss=1&searchRelation=keyword_all&searchCategory=27596",
+        ],
         "max_pages": 6,
         "email_bucket": "main",
     },
@@ -307,20 +332,9 @@ ICIMS_SITES: list[dict] = [
 # Scraper uses response interception; direct API fetch always returns 403.
 EMORY_SITES = [
     {
-        "name": "Emory Healthcare (Atlanta)",
+        "name": "Emory Healthcare",
         "page_url": "https://emory.jobs/jobs/",
-        "location_keywords": {
-            "atlanta", "decatur", "johns creek", "dunwoody", "sandy springs",
-            "tucker", "lithonia", "brookhaven", "clarkston", "college park",
-            "east point", "forest park",
-        },
-        "remote_only": False,
-        "email_bucket": "main",
-    },
-    {
-        "name": "Emory Healthcare (Remote)",
-        "page_url": "https://emory.jobs/jobs/",
-        "remote_only": True,
+        "max_pages": 10,
         "email_bucket": "main",
     },
 ]
@@ -453,7 +467,7 @@ async def _get_job_details(page, job_url: str) -> dict | None:
 # Phenom People (UVA Health)
 # ---------------------------------------------------------------------------
 
-async def _get_job_links(page, url: str) -> list[dict]:
+async def _get_job_links(page, url: str, categories: list[str] | None = None) -> list[dict]:
     await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
 
     has_sort_dropdown = True
@@ -501,6 +515,45 @@ async def _get_job_links(page, url: str) -> list[dict]:
                 _log("  Result list refreshed after sort change")
             except PlaywrightTimeoutError:
                 _log("  WARNING: Sort re-render did not detect a change — results may be unsorted")
+
+    # Apply category facet filters — Phenom stores these in a POST body, not the URL.
+    # Clicks are additive (OR logic): each selected category adds to selected_fields.category[].
+    if categories:
+        # Some deployments (e.g. UVA) hide the facet panel behind a toggle — try to open it.
+        first_item = page.locator('[data-ph-at-id="facet-results-item"]').first
+        try:
+            panel_visible = await first_item.is_visible(timeout=2_000)
+        except Exception:
+            panel_visible = False
+        if not panel_visible:
+            for open_sel in [
+                '[data-ph-at-id="facets-and-filters-button"]',
+                '[data-ph-at-id="facet-heading-link"]',
+                'button:has-text("Filter")',
+                'a:has-text("Refine")',
+            ]:
+                try:
+                    opener = page.locator(open_sel).first
+                    if await opener.count() and await opener.is_visible(timeout=1_000):
+                        await opener.click(timeout=3_000)
+                        await page.wait_for_timeout(1_000)
+                        break
+                except Exception:
+                    pass
+
+        clicked = 0
+        for cat in categories:
+            try:
+                loc = page.locator('[data-ph-at-id="facet-results-item"]').filter(has_text=cat).first
+                await loc.scroll_into_view_if_needed(timeout=3_000)
+                await loc.click(timeout=5_000)
+                await page.wait_for_timeout(300)
+                _log(f"  Category filter: {cat}")
+                clicked += 1
+            except Exception as e:
+                _log(f"  WARN — category filter failed for {cat!r}: {e}")
+        if clicked:
+            await page.wait_for_timeout(2_500)  # let filtered results settle
 
     try:
         await page.wait_for_function(
@@ -572,7 +625,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
     search_page = await browser.new_page()
     detail_page = await browser.new_page()
     try:
-        links = await _get_job_links(search_page, site["url"])
+        links = await _get_job_links(search_page, site["url"], site.get("categories"))
         page_num = 1
         results = []
         skipped = 0
@@ -1048,98 +1101,100 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
     search_page = await browser.new_page()
     detail_page = await browser.new_page()
     try:
-        links, icims_frame = await _get_icims_job_links(search_page, site)
-        if icims_frame is None:
-            return [], 0, None
-        page_num = 1
-
-        results = []
-        skipped = 0
-        consecutive_empty = 0
-        newest_seen: date | None = None
+        category_urls = site.get("urls") or [site["url"]]
         remote_only = site.get("remote_only", False)
         location_keywords = site.get("location_keywords")
         max_pages = site.get("max_pages")
 
-        # True if the first page returned card-embedded dates (newer iCIMS like Ascension)
-        has_card_dates = links and links[0].get("dateStr") is not None
+        all_results: list[dict] = []
+        total_skipped = 0
+        newest_seen: date | None = None
 
-        while links:
-            page_matches = 0
-            for i, job in enumerate(links, 1):
-                if _is_excluded_title(job["title"]):
-                    skipped += 1
-                    continue
+        for cat_url in category_urls:
+            links, icims_frame = await _get_icims_job_links(search_page, {**site, "url": cat_url})
+            if icims_frame is None:
+                continue
+            page_num = 1
+            consecutive_empty = 0
+            # True if the first page returned card-embedded dates (newer iCIMS like Ascension)
+            has_card_dates = links and links[0].get("dateStr") is not None
 
-                # Newer iCIMS portals embed date + location in the listing card
-                if has_card_dates:
-                    raw_date_str = job.get("dateStr") or ""
-                    location = job.get("location", "")
-                    if not raw_date_str:
-                        skipped += 1
+            while links:
+                page_matches = 0
+                for i, job in enumerate(links, 1):
+                    if _is_excluded_title(job["title"]):
+                        total_skipped += 1
                         continue
-                    try:
-                        dp = datetime.strptime(raw_date_str, "%m/%d/%Y").date()
-                    except ValueError:
-                        skipped += 1
-                        continue
-                    employment_type = ""
-                    occupational_category = ""
-                    work_hours = ""
-                else:
-                    details = await _get_job_details(detail_page, job["url"])
-                    if details is None:
-                        _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
-                        skipped += 1
-                        continue
-                    dp = details["date_posted"]
-                    location = details["location"]
-                    employment_type = details.get("employment_type", "")
-                    occupational_category = details.get("occupational_category", "")
-                    work_hours = details.get("work_hours", "")
 
-                if newest_seen is None or dp > newest_seen:
-                    newest_seen = dp
-                if dp >= since_date:
-                    loc_lower = location.lower()
-                    is_remote = any(kw in loc_lower for kw in REMOTE_LOCATION_KEYWORDS)
-                    if remote_only:
-                        qualifies = is_remote
-                    elif location_keywords:
-                        qualifies = any(kw in loc_lower for kw in location_keywords)
+                    # Newer iCIMS portals embed date + location in the listing card
+                    if has_card_dates:
+                        raw_date_str = job.get("dateStr") or ""
+                        location = job.get("location", "")
+                        if not raw_date_str:
+                            total_skipped += 1
+                            continue
+                        try:
+                            dp = datetime.strptime(raw_date_str, "%m/%d/%Y").date()
+                        except ValueError:
+                            total_skipped += 1
+                            continue
+                        employment_type = ""
+                        occupational_category = ""
+                        work_hours = ""
                     else:
-                        qualifies = True
-                    if qualifies:
-                        results.append({
-                            "title": job["title"], "url": job["url"],
-                            "date_posted": dp, "location": location,
-                            "employment_type": employment_type,
-                            "occupational_category": occupational_category,
-                            "work_hours": work_hours,
-                        })
-                if dp >= since_date:
-                    page_matches += 1
+                        details = await _get_job_details(detail_page, job["url"])
+                        if details is None:
+                            _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
+                            total_skipped += 1
+                            continue
+                        dp = details["date_posted"]
+                        location = details["location"]
+                        employment_type = details.get("employment_type", "")
+                        occupational_category = details.get("occupational_category", "")
+                        work_hours = details.get("work_hours", "")
 
-            freshness = _page_freshness(newest_seen)
-            if page_matches == 0:
-                consecutive_empty += 1
-                if consecutive_empty >= 5:
-                    _log(f"  {site['name']}: consecutive stop — page {page_num}, {freshness}")
+                    if newest_seen is None or dp > newest_seen:
+                        newest_seen = dp
+                    if dp >= since_date:
+                        loc_lower = location.lower()
+                        is_remote = any(kw in loc_lower for kw in REMOTE_LOCATION_KEYWORDS)
+                        if remote_only:
+                            qualifies = is_remote
+                        elif location_keywords:
+                            qualifies = any(kw in loc_lower for kw in location_keywords)
+                        else:
+                            qualifies = True
+                        if qualifies:
+                            all_results.append({
+                                "title": job["title"], "url": job["url"],
+                                "date_posted": dp, "location": location,
+                                "employment_type": employment_type,
+                                "occupational_category": occupational_category,
+                                "work_hours": work_hours,
+                            })
+                    if dp >= since_date:
+                        page_matches += 1
+
+                freshness = _page_freshness(newest_seen)
+                if page_matches == 0:
+                    consecutive_empty += 1
+                    if consecutive_empty >= 5:
+                        _log(f"  {site['name']}: consecutive stop — page {page_num}, {freshness}")
+                        break
+                    _log(f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness} — next")
+                else:
+                    _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
+                    consecutive_empty = 0
+
+                page_num += 1
+                if max_pages and page_num > max_pages:
+                    _log(f"  {site['name']}: page limit ({max_pages}) reached — stopping at page {page_num}")
                     break
-                _log(f"  Page {page_num}: 0 recent ({consecutive_empty}/5), {freshness} — next")
+                links = await _get_icims_next_page(icims_frame)
             else:
-                _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
-                consecutive_empty = 0
+                _log("  No more pages")
 
-            page_num += 1
-            if max_pages and page_num > max_pages:
-                _log(f"  {site['name']}: page limit ({max_pages}) reached — stopping at page {page_num}")
-                break
-            links = await _get_icims_next_page(icims_frame)
-        else:
-            _log("  No more pages")
-
-        return results, skipped, newest_seen
+        return all_results, total_skipped, newest_seen
     finally:
         await search_page.close()
         await detail_page.close()
