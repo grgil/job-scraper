@@ -220,14 +220,7 @@ TITLE_EXCLUDE_PHRASES = {
     "patient scheduler", "appointment scheduler", "clinic scheduler",
     "front desk", "receptionist", "welcome", "parking assistant",
     "infection preventionist",
-    "administrative assistant",
     "coding specialist", "coding denials",
-    "patient access rep",    # Patient Access Representative, Patient Access Rep
-    "patient service spec",  # Patient Service Specialist(s)
-    "patient service rep",   # Patient Service Representative(s)
-    "patient service assoc", # Patient Service Associate(s)
-    "registration specialist",
-    "access associate",
     "unit clerk",
     "safety attendant",
     "precertification",
