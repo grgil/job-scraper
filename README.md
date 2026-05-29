@@ -19,7 +19,7 @@ Daily and weekly job alert scraper covering health system portals across Workday
 |------|-----|--------------|--------|
 | UVA Health | Phenom | DOM + JSON-LD | Category facet (5 categories) |
 | VCU Health | Phenom | DOM + JSON-LD | Category facet (6 categories) |
-| Duke Health | Phenom | DOM + JSON-LD | Category facet (7 categories) |
+| Duke Health | Phenom | DOM + JSON-LD | Category facet (4 categories) |
 | Bon Secours | Workday | CXS intercept | None — full site |
 | Carilion Clinic | Workday | CXS intercept | `jobFamilyGroup` ×4 |
 | Prisma Health | Workday | CXS intercept | `jobFamilyGroup` ×4 |
@@ -152,7 +152,7 @@ Each site optionally pre-filters results before the scraper applies its own post
 |------|--------|------|
 | UVA Health | 5 category facets | Phenom POST |
 | VCU Health | 6 category facets | Phenom POST |
-| Duke Health | 7 category facets | Phenom POST |
+| Duke Health | 4 category facets | Phenom POST |
 | Bon Secours | none | — |
 | Carilion Clinic | `jobFamilyGroup` ×4 | Workday |
 | Prisma Health | `jobFamilyGroup` ×4 | Workday |

@@ -77,9 +77,6 @@ SITES = [
             "Information Technology",
             "Revenue Management",
             "Administrative and Support Services",
-            "Population Health",
-            "Patient Quality and Safety",
-            "Revenue Cycle",
         ],
         "max_pages": 12,
         "email_bucket": "main",
@@ -334,7 +331,7 @@ EMORY_SITES = [
     {
         "name": "Emory Healthcare",
         "page_url": "https://emory.jobs/jobs/",
-        "max_pages": 10,
+        "max_pages": 20,
         "email_bucket": "main",
     },
 ]
@@ -515,6 +512,8 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
                 _log("  Result list refreshed after sort change")
             except PlaywrightTimeoutError:
                 _log("  WARNING: Sort re-render did not detect a change — results may be unsorted")
+        elif current_sort == '':
+            _log("  Sort dropdown empty — sort likely URL-controlled, skipping")
 
     # Apply category facet filters — Phenom stores these in a POST body, not the URL.
     # Clicks are additive (OR logic): each selected category adds to selected_fields.category[].

@@ -391,6 +391,9 @@ PHENOM_TARGET_CATEGORIES = {
         "Information Technology",
         "Revenue Management",
         "Administrative and Support",
+        "Population Health",
+        "Patient Quality and Safety",
+        "Revenue Cycle",
     ],
 }
 
@@ -519,6 +522,174 @@ async def probe_phenom_categories() -> None:
         await browser.close()
 
 
+async def probe_emory_categories() -> None:
+    """Load emory.jobs/jobs/, capture the prod-search-api.jobsyn.org call structure,
+    then click available filter controls and compare the resulting API calls.
+
+    Objective: determine whether the API accepts department/category params so we can
+    filter before scraping rather than bumping max_pages.
+
+    Run with: python inspect_selectors.py emory-categories
+    """
+    import json as _json
+    from urllib.parse import urlparse, parse_qs
+
+    page_url = "https://emory.jobs/jobs/"
+    api_calls: list[dict] = []
+
+    async def _on_req(req, _cap=api_calls):
+        if "prod-search-api.jobsyn.org" in req.url:
+            try:
+                body = req.post_data or ""
+            except Exception:
+                body = ""
+            _cap.append({"method": req.method, "url": req.url, "body": body})
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        page.on("request", _on_req)
+
+        print(f"\n{'='*65}\n  Emory Healthcare — Jobsyn API filter probe\n{'='*65}")
+        print(f"  Loading {page_url} ...")
+        await page.goto(page_url, wait_until="networkidle", timeout=90_000)
+        await page.wait_for_timeout(3_000)
+
+        # Print initial API call — the full URL reveals available params
+        if api_calls:
+            initial = api_calls[0]
+            print(f"\n  Initial API call [{initial['method']}]:")
+            print(f"    {initial['url']}")
+            parsed = urlparse(initial["url"])
+            params = parse_qs(parsed.query)
+            if params:
+                print(f"    Query params:")
+                for k, v in params.items():
+                    print(f"      {k} = {v}")
+            if initial["body"]:
+                try:
+                    print(f"    POST body: {_json.dumps(_json.loads(initial['body']), indent=4)[:600]}")
+                except Exception:
+                    print(f"    POST body (raw): {initial['body'][:400]}")
+        else:
+            print("\n  WARNING: No prod-search-api call captured on page load")
+
+        # Enumerate DOM filter controls
+        print(f"\n  --- Filter controls ---")
+
+        selects = await page.evaluate("""() =>
+            Array.from(document.querySelectorAll('select')).map(sel => ({
+                id: sel.id, name: sel.name,
+                cls: (sel.className || '').toString().slice(0, 60),
+                options: Array.from(sel.options)
+                    .map(o => ({value: o.value, text: o.text.trim()}))
+                    .filter(o => o.value && o.text)
+                    .slice(0, 15),
+            }))
+        """)
+        if selects:
+            print(f"\n  Dropdowns ({len(selects)}):")
+            for s in selects:
+                print(f"    <select id={repr(s['id'])} name={repr(s['name'])} class={repr(s['cls'])}>")
+                for o in s["options"]:
+                    print(f"      value={repr(o['value'])}  text={repr(o['text'])}")
+        else:
+            print("  No <select> elements found")
+
+        checkboxes = await page.evaluate("""() => {
+            const out = [];
+            document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                let text = '';
+                if (cb.id) {
+                    const lbl = document.querySelector(`label[for="${cb.id}"]`);
+                    if (lbl) text = (lbl.innerText || lbl.textContent || '').trim();
+                }
+                if (!text) {
+                    const parent = cb.closest('label') || cb.parentElement;
+                    if (parent) text = (parent.innerText || parent.textContent || '').trim();
+                }
+                out.push({id: cb.id, name: cb.name, value: cb.value, text: text.slice(0, 80), checked: cb.checked});
+            });
+            return out.slice(0, 40);
+        }""")
+        if checkboxes:
+            print(f"\n  Checkboxes ({len(checkboxes)}):")
+            for cb in checkboxes:
+                print(f"    id={repr(cb['id'])} name={repr(cb['name'])} val={repr(cb['value'])}  label={repr(cb['text'])}")
+        else:
+            print("  No checkboxes found")
+
+        # Try to click a filter (prefer relevance keywords, fall back to first checkbox)
+        relevant_kw = ["technology", "information", "finance", "analytics", "data", "quality", "compliance", "revenue", "informatics"]
+        target_cb = None
+        for cb in checkboxes:
+            if any(kw in cb["text"].lower() for kw in relevant_kw):
+                target_cb = cb
+                break
+        if not target_cb and checkboxes:
+            target_cb = checkboxes[0]
+
+        if target_cb:
+            api_calls.clear()
+            print(f"\n  Clicking checkbox: {repr(target_cb['text'])} (id={target_cb['id']}) ...")
+            try:
+                if target_cb["id"]:
+                    cb_loc = page.locator(f'input#{ target_cb["id"] }')
+                else:
+                    cb_loc = page.locator(f'input[value="{target_cb["value"]}"]').first
+                await cb_loc.check(timeout=5_000)
+                await page.wait_for_timeout(3_500)
+
+                if api_calls:
+                    after = api_calls[-1]
+                    print(f"\n  API call after filter click [{after['method']}]:")
+                    print(f"    {after['url']}")
+                    parsed_after = urlparse(after["url"])
+                    params_after = parse_qs(parsed_after.query)
+                    if params_after:
+                        print(f"    Query params:")
+                        for k, v in params_after.items():
+                            print(f"      {k} = {v}")
+                    if after["body"]:
+                        try:
+                            print(f"    POST body: {_json.dumps(_json.loads(after['body']), indent=4)[:600]}")
+                        except Exception:
+                            print(f"    POST body (raw): {after['body'][:400]}")
+                else:
+                    print("  (no new API call captured after click — filter may update client-side only)")
+            except Exception as e:
+                print(f"  Click error: {e}")
+
+        # Try select dropdown if no useful checkboxes
+        elif selects:
+            target_sel = selects[0]
+            if target_sel["options"]:
+                first_opt = target_sel["options"][0]
+                api_calls.clear()
+                print(f"\n  Selecting dropdown option: {repr(first_opt['text'])} in select id={target_sel['id']} ...")
+                try:
+                    await page.select_option(f'select#{target_sel["id"]}' if target_sel["id"] else "select", first_opt["value"])
+                    await page.wait_for_timeout(3_500)
+                    if api_calls:
+                        after = api_calls[-1]
+                        print(f"\n  API call after dropdown select [{after['method']}]:")
+                        print(f"    {after['url']}")
+                        parsed_after = urlparse(after["url"])
+                        params_after = parse_qs(parsed_after.query)
+                        if params_after:
+                            print(f"    Query params:")
+                            for k, v in params_after.items():
+                                print(f"      {k} = {v}")
+                    else:
+                        print("  (no new API call captured after dropdown change)")
+                except Exception as e:
+                    print(f"  Dropdown error: {e}")
+        else:
+            print("\n  No filter controls found to click")
+
+        await browser.close()
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "musc-cxs":
@@ -527,5 +698,7 @@ if __name__ == "__main__":
         asyncio.run(probe_workday_cxs())
     elif len(sys.argv) > 1 and sys.argv[1] == "phenom-categories":
         asyncio.run(probe_phenom_categories())
+    elif len(sys.argv) > 1 and sys.argv[1] == "emory-categories":
+        asyncio.run(probe_emory_categories())
     else:
         asyncio.run(main())
