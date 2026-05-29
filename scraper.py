@@ -221,13 +221,20 @@ TITLE_EXCLUDE_PHRASES = {
     "front desk", "receptionist", "welcome", "parking assistant",
     "infection preventionist",
     "coding specialist", "coding denials",
-    "unit clerk",
+    "unit clerk", "unit secretary", "ward clerk",
     "safety attendant",
     "precertification",
     "floor care",
     "billing follow up",
     "acct resolution",
     "payment variance",
+    "postdoc", "post doc", "post-doc",  # postdoctoral / post doctoral / post-doctoral
+    "food &",
+    "dining",
+    "medical lab",
+    "dietician",                         # alternate spelling of dietitian
+    "child life specialist",
+    "technologist",
 }
 TITLE_EXCLUDE_WORDS = {
     "rn", "lpn", "lvn", "cna", "crna", "cns", "emt", "paramedic",
@@ -237,6 +244,8 @@ TITLE_EXCLUDE_WORDS = {
     "painter", "elevator",
     "schegistrar",
     "lcsw", "lpc",
+    "cook",
+    "president",   # also matches vice president
 }
 PAYER_EXCLUDE_WORDS = {"lead", "senior", "manager", "director", "principal"}
 
