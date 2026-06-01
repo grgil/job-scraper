@@ -174,8 +174,6 @@ WORKDAY_SITES = [
     # {"name": "Waystar (Remote)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",                   "remote_only": True, "max_pages": 6,  "email_bucket": "payer"},
 ]
 
-REMOTE_LOCATION_KEYWORDS = {"remote", "work at home", "work from home", "virtual", "telecommute", "home based"}
-
 # Title exclusion filter — applied at email-build time, not scrape time
 TITLE_EXCLUDE_PHRASES = {
     "registered nurse", "licensed practical", "licensed vocational",
@@ -444,6 +442,18 @@ def _page_freshness(newest_seen: date | None) -> str:
 # Shared detail extractor — platform-agnostic JSON-LD parsing (all 3 ATSes)
 # ---------------------------------------------------------------------------
 
+async def _make_detail_page(browser):
+    """Create a browser tab for detail-page visits, blocking non-essential resources."""
+    page = await browser.new_page()
+    await page.route(
+        "**/*",
+        lambda route: route.abort()
+        if route.request.resource_type in ("image", "stylesheet", "font", "media")
+        else route.continue_(),
+    )
+    return page
+
+
 async def _get_job_details(page, job_url: str) -> dict | None:
     try:
         await page.goto(job_url, wait_until="domcontentloaded", timeout=60_000)
@@ -646,12 +656,13 @@ async def _get_next_page_links(search_page) -> list[dict]:
 async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
     _log(f"Scraping {site['name']} (Phenom People) ...")
     search_page = await browser.new_page()
-    detail_page = await browser.new_page()
+    detail_page = await _make_detail_page(browser)
     try:
         links = await _get_job_links(search_page, site["url"], site.get("categories"))
         page_num = 1
         results = []
-        skipped = 0
+        skipped_excl = 0
+        skipped_err = 0
         consecutive_empty = 0
         newest_seen: date | None = None
 
@@ -662,7 +673,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
 
                 if details is None:
                     _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
-                    skipped += 1
+                    skipped_err += 1
                     continue
 
                 dp = details["date_posted"]
@@ -671,10 +682,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
                 if dp >= since_date:
                     loc = (details.get("location") or "").lower()
                     loc_kw = site.get("location_keywords", set())
-                    is_remote = any(k in loc for k in REMOTE_LOCATION_KEYWORDS)
-                    if site.get("remote_only"):
-                        qualifies = is_remote
-                    elif loc_kw:
+                    if loc_kw:
                         qualifies = any(k in loc for k in loc_kw)
                     else:
                         qualifies = True
@@ -703,7 +711,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
         else:
             _log("  No more pages")
 
-        return results, skipped, newest_seen
+        return results, skipped_excl, skipped_err, newest_seen
     finally:
         await search_page.close()
         await detail_page.close()
@@ -767,9 +775,8 @@ _WORKDAY_DOM_LINKS_JS = """() => {
 async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
     _log(f"Scraping {site['name']} (Workday) ...")
     search_page = await browser.new_page()
-    detail_page = await browser.new_page()
+    detail_page = await _make_detail_page(browser)
 
-    remote_only = site.get("remote_only", False)
     loc_kw = site.get("location_keywords", set())
     base_url = re.sub(r"/jobs$", "", site["url"].split("?")[0].rstrip("/"))  # externalPath is relative to tenant root, e.g. /job/...
     _cxs_buf: list[dict] = []
@@ -811,7 +818,8 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                 return [], 0, None
 
         results = []
-        skipped = 0
+        skipped_excl = 0
+        skipped_err = 0
         consecutive_empty = 0
         newest_seen: date | None = None
         page_num = 1
@@ -842,41 +850,19 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     title = re.sub(r" {2,}", " ", (job.get("title") or "").strip())
                     ext_path = job.get("externalPath", "")
                     if not title or not ext_path:
-                        skipped += 1
+                        skipped_err += 1
                         continue
                     url = base_url + ext_path
                     cxs_loc = (job.get("locationsText") or "").lower()
                     cxs_dp = _parse_posted_on(job.get("postedOn", ""))
 
-                    if remote_only:
-                        # CXS locationsText is the office address, not work arrangement —
-                        # visit detail page to reliably detect remote jobs.
-                        details = await _get_job_details(detail_page, url)
-                        if details is None:
-                            _log(f"  [p{page_num}/{i}] No JSON-LD — {title[:60]}")
-                            skipped += 1
-                            continue
-                        dp = details["date_posted"]
-                        loc = (details.get("location") or "").lower()
-                        is_remote = any(k in loc for k in REMOTE_LOCATION_KEYWORDS)
-                        page_dates.append(dp)
-                        if newest_seen is None or dp > newest_seen:
-                            newest_seen = dp
-                        if dp >= since_date:
-                            if is_remote:
-                                results.append({**{"title": title, "url": url}, **details})
-                        if dp >= since_date:
-                            page_matches += 1
-                        continue
-
-                    # Non-remote_only CXS path.
                     # If CXS omitted postedOn (e.g. MUSC tenant), fetch the detail page for
                     # the real date rather than defaulting every job to since_date.
                     if cxs_dp is None:
                         details = await _get_job_details(detail_page, url)
                         if details is None:
                             _log(f"  [p{page_num}/{i}] No JSON-LD — {title[:60]}")
-                            skipped += 1
+                            skipped_err += 1
                             continue
                         dp = details["date_posted"]
                         loc = (details.get("location") or "").lower()
@@ -908,7 +894,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     details = await _get_job_details(detail_page, job["url"])
                     if details is None:
                         _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
-                        skipped += 1
+                        skipped_err += 1
                         continue
                     dp = details["date_posted"]
                     page_dates.append(dp)
@@ -916,10 +902,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                         newest_seen = dp
                     if dp >= since_date:
                         loc = (details.get("location") or "").lower()
-                        is_remote = any(k in loc for k in REMOTE_LOCATION_KEYWORDS)
-                        if remote_only:
-                            qualifies = is_remote
-                        elif loc_kw:
+                        if loc_kw:
                             qualifies = any(k in loc for k in loc_kw)
                         else:
                             qualifies = True
@@ -969,7 +952,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
             _log(f"  WARN — {site['name']}: capping results {len(results)} → {max_results} (batch refresh likely)")
             results = results[:max_results]
 
-        return results, skipped, newest_seen
+        return results, skipped_excl, skipped_err, newest_seen
     finally:
         await search_page.close()
         await detail_page.close()
@@ -1122,15 +1105,15 @@ async def _get_icims_next_page(frame) -> list[dict]:
 async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
     _log(f"Scraping {site['name']} (iCIMS) ...")
     search_page = await browser.new_page()
-    detail_page = await browser.new_page()
+    detail_page = await _make_detail_page(browser)
     try:
         category_urls = site.get("urls") or [site["url"]]
-        remote_only = site.get("remote_only", False)
         location_keywords = site.get("location_keywords")
         max_pages = site.get("max_pages")
 
         all_results: list[dict] = []
-        total_skipped = 0
+        total_skipped_excl = 0
+        total_skipped_err = 0
         newest_seen: date | None = None
 
         for cat_url in category_urls:
@@ -1146,7 +1129,7 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
                 page_matches = 0
                 for i, job in enumerate(links, 1):
                     if _is_excluded_title(job["title"]):
-                        total_skipped += 1
+                        total_skipped_excl += 1
                         continue
 
                     # Newer iCIMS portals embed date + location in the listing card
@@ -1154,12 +1137,12 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
                         raw_date_str = job.get("dateStr") or ""
                         location = job.get("location", "")
                         if not raw_date_str:
-                            total_skipped += 1
+                            total_skipped_err += 1
                             continue
                         try:
                             dp = datetime.strptime(raw_date_str, "%m/%d/%Y").date()
                         except ValueError:
-                            total_skipped += 1
+                            total_skipped_err += 1
                             continue
                         employment_type = ""
                         occupational_category = ""
@@ -1168,7 +1151,7 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
                         details = await _get_job_details(detail_page, job["url"])
                         if details is None:
                             _log(f"  [p{page_num}/{i}] No JSON-LD — {job['title'][:60]}")
-                            total_skipped += 1
+                            total_skipped_err += 1
                             continue
                         dp = details["date_posted"]
                         location = details["location"]
@@ -1180,10 +1163,7 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
                         newest_seen = dp
                     if dp >= since_date:
                         loc_lower = location.lower()
-                        is_remote = any(kw in loc_lower for kw in REMOTE_LOCATION_KEYWORDS)
-                        if remote_only:
-                            qualifies = is_remote
-                        elif location_keywords:
+                        if location_keywords:
                             qualifies = any(kw in loc_lower for kw in location_keywords)
                         else:
                             qualifies = True
@@ -1217,7 +1197,7 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
             else:
                 _log("  No more pages")
 
-        return all_results, total_skipped, newest_seen
+        return all_results, total_skipped_excl, total_skipped_err, newest_seen
     finally:
         await search_page.close()
         await detail_page.close()
@@ -1248,14 +1228,15 @@ async def _intercept_emory_api(page) -> dict:
         page.remove_listener("response", on_response)
 
 
-async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
+async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, int, date | None]:
     _log(f"Scraping {site['name']} (Jobsyn/DirectEmployers) ...")
     page = await browser.new_page()
     try:
         loc_kw = site.get("location_keywords", set())
         max_pages = site.get("max_pages")
         results: list[dict] = []
-        skipped = 0
+        skipped_excl = 0
+        skipped_err = 0
         consecutive_old = 0
         newest_seen: date | None = None
         page_num = 1
@@ -1286,17 +1267,17 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                 state      = (job.get("state_short") or "").strip()
 
                 if not raw_title or not raw_date or not guid:
-                    skipped += 1
+                    skipped_err += 1
                     continue
 
                 if _is_excluded_title(raw_title):
-                    skipped += 1
+                    skipped_excl += 1
                     continue
 
                 try:
                     dp = date.fromisoformat(raw_date)
                 except ValueError:
-                    skipped += 1
+                    skipped_err += 1
                     continue
 
                 if newest_seen is None or dp > newest_seen:
@@ -1311,12 +1292,7 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                 job_url = f"https://emory.jobs/{city_slug}/{title_slug}/{guid}/job/"
                 location = loc_exact or (f"{city}, {state}" if city and state else city or state)
                 loc_str = location.lower()
-                is_remote = any(k in loc_str for k in REMOTE_LOCATION_KEYWORDS)
-
-                if site.get("remote_only"):
-                    if not is_remote:
-                        continue
-                elif loc_kw and not any(k in loc_str for k in loc_kw):
+                if loc_kw and not any(k in loc_str for k in loc_kw):
                     continue
 
                 results.append({
@@ -1361,7 +1337,7 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                 _log(f"  WARN — no API response after More click on page {page_num}")
                 break
 
-        return results, skipped, newest_seen
+        return results, skipped_excl, skipped_err, newest_seen
     finally:
         await page.close()
 
@@ -1440,7 +1416,7 @@ def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: d
     return newest_seen < since_date - timedelta(days=2)
 
 
-def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_warning: bool = False, newest_seen: date | None = None, extra_words: frozenset[str] = frozenset()) -> str:
+def _build_site_section(site_name: str, jobs: list[dict], skipped_excl: int, skipped_err: int, sort_warning: bool = False, newest_seen: date | None = None, extra_words: frozenset[str] = frozenset()) -> str:
     shown_jobs = [j for j in jobs if not _is_excluded_title(j["title"], extra_words)]
     filtered = len(jobs) - len(shown_jobs)
     count = len(shown_jobs)
@@ -1474,9 +1450,13 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
         if job_items_html else
         '<p style="color:#aaa;font-size:13px;">No new listings today.</p>'
     )
-    skip_note = (
-        f'<p style="color:#bbb;font-size:12px;margin-top:4px;">{skipped} skipped (clinical title or no structured data)</p>'
-        if skipped else ""
+    excl_note = (
+        f'<p style="color:#bbb;font-size:12px;margin-top:4px;">{skipped_excl} skipped (clinical/excluded title)</p>'
+        if skipped_excl else ""
+    )
+    err_note = (
+        f'<p style="color:#bbb;font-size:12px;margin-top:2px;">{skipped_err} skipped (no structured data)</p>'
+        if skipped_err else ""
     )
     filter_note = (
         f'<p style="color:#bbb;font-size:12px;margin-top:2px;">{filtered} filtered (clinical/non-informatics title)</p>'
@@ -1491,7 +1471,7 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped: int, sort_war
     return (
         f'<h3 style="color:#1a4a7a;margin-bottom:4px;">{site_name}</h3>'
         f'<p style="margin-top:0;font-size:13px;color:#555;">{count} new posting{"s" if count != 1 else ""}</p>'
-        f'{warning_note}{body}{skip_note}{filter_note}'
+        f'{warning_note}{body}{excl_note}{err_note}{filter_note}'
     )
 
 
@@ -1513,8 +1493,8 @@ def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None
     top_matches_html = _build_top_matches(richmond_primaries, other_primaries)
 
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
-        _build_site_section(site_name, jobs, skipped, sort_warning, newest_seen, extra_words)
-        for site_name, jobs, skipped, sort_warning, newest_seen in results
+        _build_site_section(site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen, extra_words)
+        for site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen in results
         if jobs
     )
     return f"""<!DOCTYPE html>
@@ -1563,17 +1543,13 @@ async def _run_site(
     async with sem:
         _t0 = time.perf_counter()
         try:
-            jobs, skipped, newest_seen = await scraper_fn(browser, site, since_date)
-            if _sort_collapsed(jobs, newest_seen, since_date):
-                _log(f"  {site['name']}: sort collapse detected (newest={newest_seen}) — retrying")
-                await asyncio.sleep(30)
-                jobs, skipped, newest_seen = await scraper_fn(browser, site, since_date)
+            jobs, skipped_excl, skipped_err, newest_seen = await scraper_fn(browser, site, since_date)
             sort_warning = _sort_collapsed(jobs, newest_seen, since_date)
             if sort_warning:
-                _log(f"  {site['name']}: sort still collapsed after retry — flagging in email")
+                _log(f"  {site['name']}: sort collapsed — flagging in email")
             _elapsed = int(time.perf_counter() - _t0)
-            _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped} skipped, {_elapsed}s — {_page_freshness(newest_seen)}")
-            return (site["name"], jobs, skipped, sort_warning, newest_seen, site.get("email_bucket", "main"))
+            _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped_excl} excl, {skipped_err} no-data, {_elapsed}s — {_page_freshness(newest_seen)}")
+            return (site["name"], jobs, skipped_excl, skipped_err, sort_warning, newest_seen, site.get("email_bucket", "main"))
         except Exception as e:
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"  {site['name']}: ERROR after {_elapsed}s — {e}")
@@ -1648,13 +1624,13 @@ async def main() -> None:
                     week_cutoff = (date.today() - timedelta(days=7)).isoformat()
 
                     # All main results — no dedup filter, include seen jobs
-                    all_week = [(n, j, sk, sw, ns)
-                                for n, j, sk, sw, ns, bkt in results
+                    all_week = [(n, j, sk_e, sk_p, sw, ns)
+                                for n, j, sk_e, sk_p, sw, ns, bkt in results
                                 if bkt == "main"]
 
                     # Add any new URLs found by rescrape to seen_record
                     rescrape_urls: set[str] = set()
-                    for name, jobs, _, _, _ in all_week:
+                    for name, jobs, _, _, _, _ in all_week:
                         for j in jobs:
                             url = j.get("url", "")
                             rescrape_urls.add(url)
@@ -1680,12 +1656,12 @@ async def main() -> None:
 
                     # Merge missed jobs back into their site slot (or append a new slot)
                     for site_name, missed_jobs in missed_by_site.items():
-                        for i, (n, j, sk, sw, ns) in enumerate(all_week):
+                        for i, (n, j, sk_e, sk_p, sw, ns) in enumerate(all_week):
                             if n == site_name:
-                                all_week[i] = (n, j + missed_jobs, sk, sw, ns)
+                                all_week[i] = (n, j + missed_jobs, sk_e, sk_p, sw, ns)
                                 break
                         else:
-                            all_week.append((site_name, missed_jobs, 0, False, None))
+                            all_week.append((site_name, missed_jobs, 0, 0, False, None))
 
                     def _filter_primary(bucket_results):
                         return [
@@ -1693,17 +1669,17 @@ async def main() -> None:
                              [j for j in jobs
                               if not _is_excluded_title(j["title"])
                               and _priority_score(j, name) == "primary"],
-                             skipped, sort_warn, newest)
-                            for name, jobs, skipped, sort_warn, newest in bucket_results
+                             sk_e, sk_p, sort_warn, newest)
+                            for name, jobs, sk_e, sk_p, sort_warn, newest in bucket_results
                         ]
 
                     def _has_content(bucket_results, extra_words=frozenset()):
-                        visible = sum(1 for _, jobs, _, _, _ in bucket_results
+                        visible = sum(1 for _, jobs, _, _, _, _ in bucket_results
                                       for j in jobs if not _is_excluded_title(j["title"], extra_words))
-                        return visible > 0 or any(sk or sw for _, _, sk, sw, _ in bucket_results)
+                        return visible > 0 or any(sk_e or sk_p or sw for _, _, sk_e, sk_p, sw, _ in bucket_results)
 
                     primary_results = _filter_primary(all_week)
-                    for _name, _jobs, _, _, _ in primary_results:
+                    for _name, _jobs, _, _, _, _ in primary_results:
                         for _j in _jobs:
                             if not _is_excluded_title(_j["title"]):
                                 _log(f"  WEEKLY PRIMARY ({_name}) — {_j['title'][:70]}")
@@ -1724,7 +1700,7 @@ async def main() -> None:
 
                     def _dedup(bucket_results):
                         deduped = []
-                        for name, jobs, skipped, sort_warn, newest in bucket_results:
+                        for name, jobs, sk_e, sk_p, sort_warn, newest in bucket_results:
                             fresh = []
                             for j in jobs:
                                 url = j.get("url", "")
@@ -1736,16 +1712,16 @@ async def main() -> None:
                                         seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": name}
                                     else:
                                         seen_record[url] = today_str
-                            deduped.append((name, fresh, skipped, sort_warn, newest))
+                            deduped.append((name, fresh, sk_e, sk_p, sort_warn, newest))
                         return deduped
 
-                    main_results  = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "main"])
-                    payer_results = _dedup([(n, j, sk, sw, ns) for n, j, sk, sw, ns, bkt in results if bkt == "payer"])
+                    main_results  = _dedup([(n, j, sk_e, sk_p, sw, ns) for n, j, sk_e, sk_p, sw, ns, bkt in results if bkt == "main"])
+                    payer_results = _dedup([(n, j, sk_e, sk_p, sw, ns) for n, j, sk_e, sk_p, sw, ns, bkt in results if bkt == "payer"])
 
                     def _has_content(bucket_results, extra_words=frozenset()):
-                        visible = sum(1 for _, jobs, _, _, _ in bucket_results
+                        visible = sum(1 for _, jobs, _, _, _, _ in bucket_results
                                       for j in jobs if not _is_excluded_title(j["title"], extra_words))
-                        return visible > 0 or any(sk or sw for _, _, sk, sw, _ in bucket_results)
+                        return visible > 0 or any(sk_e or sk_p or sw for _, _, sk_e, sk_p, sw, _ in bucket_results)
 
                     if no_email:
                         for label, bucket, extra in [

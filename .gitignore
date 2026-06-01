@@ -1,5 +1,6 @@
 .env
 scraper.log
+seen_jobs.json
 __pycache__/
 *.pyc
 preview_*.html

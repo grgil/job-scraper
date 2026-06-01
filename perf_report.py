@@ -16,9 +16,9 @@ LOG_FILE = Path(__file__).parent / "scraper.log"
 _LINE_RE = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\] (.+)$")
 
 # Matches summary lines emitted by _run_site:
-# "Site Name: N qualifying job(s), M skipped, Xs — newest_seen=..."
+# "Site Name: N qualifying job(s), M excl, P no-data, Xs — newest_seen=..."
 _SUMMARY_RE = re.compile(
-    r"^(.+?): (\d+) qualifying job\(s\), (\d+) skipped, (\d+)s — (.+)$"
+    r"^(.+?): (\d+) qualifying job\(s\), (\d+) excl, (\d+) no-data, (\d+)s — (.+)$"
 )
 
 # Matches platform announcement lines emitted at scrape function entry:
@@ -84,12 +84,13 @@ def _build_report(messages: list[str]) -> list[dict]:
         sm = _SUMMARY_RE.match(msg)
         if not sm:
             continue
-        name, qualifying, skipped, elapsed, freshness = sm.groups()
+        name, qualifying, excl, no_data, elapsed, freshness = sm.groups()
         rows.append({
             "site":       name,
             "platform":   platform_map.get(name, "?"),
             "qualifying": int(qualifying),
-            "skipped":    int(skipped),
+            "excl":       int(excl),
+            "no_data":    int(no_data),
             "elapsed_s":  int(elapsed),
             "freshness":  freshness,
             "stop":       stop_map.get(name, "no_more_pages"),
@@ -108,7 +109,8 @@ def _print_table(rows: list[dict], run_header: str) -> None:
         ("Platform",   "platform",   max(len(r["platform"])   for r in rows)),
         ("Elapsed",    "elapsed_s",  7),
         ("Qualifying", "qualifying", 9),
-        ("Skipped",    "skipped",    7),
+        ("Excl",       "excl",       4),
+        ("No-data",    "no_data",    7),
         ("Stop",       "stop",       max(len(r["stop"])       for r in rows)),
         ("Freshness",  "freshness",  max(len(r["freshness"])  for r in rows)),
     ]
@@ -129,8 +131,9 @@ def _print_table(rows: list[dict], run_header: str) -> None:
 
     total_s = sum(r["elapsed_s"] for r in rows)
     total_q = sum(r["qualifying"] for r in rows)
-    total_sk = sum(r["skipped"] for r in rows)
-    print(f"\nTotals: {total_q} qualifying, {total_sk} skipped, {total_s}s wall-clock sum")
+    total_excl = sum(r["excl"] for r in rows)
+    total_nd = sum(r["no_data"] for r in rows)
+    print(f"\nTotals: {total_q} qualifying, {total_excl} excl, {total_nd} no-data, {total_s}s wall-clock sum")
     print("(wall-clock sum > actual run time because sites execute concurrently)\n")
 
 
