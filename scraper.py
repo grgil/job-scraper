@@ -1475,13 +1475,13 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped_excl: int, ski
     )
 
 
-def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date, extra_words: frozenset[str] = frozenset()) -> str:
-    total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
+def build_html_email(results: list[tuple[str, list[dict], int, int, bool, date | None]], today: date, extra_words: frozenset[str] = frozenset()) -> str:
+    total = sum(1 for _, jobs, _, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
     date_str = today.strftime('%b %d, %Y')
 
     richmond_primaries: list[tuple[str, dict]] = []
     other_primaries: list[tuple[str, dict]] = []
-    for site_name, jobs, _, _, _ in results:
+    for site_name, jobs, _, _, _, _ in results:
         for job in jobs:
             if _is_excluded_title(job["title"], extra_words):
                 continue
@@ -1494,7 +1494,7 @@ def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None
 
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
         _build_site_section(site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen, extra_words)
-        for site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen in results
+        for site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen, _ in results
         if jobs
     )
     return f"""<!DOCTYPE html>
@@ -1510,8 +1510,8 @@ def build_html_email(results: list[tuple[str, list[dict], int, bool, date | None
 </html>"""
 
 
-def send_email(results: list[tuple[str, list[dict], int, bool, date | None]], today: date, label: str = "", extra_words: frozenset[str] = frozenset()) -> None:
-    total = sum(1 for _, jobs, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
+def send_email(results: list[tuple[str, list[dict], int, int, bool, date | None]], today: date, label: str = "", extra_words: frozenset[str] = frozenset()) -> None:
+    total = sum(1 for _, jobs, _, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
     tag = f" [{label}]" if label else ""
     subject = f"[Job Alert{tag}] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
     html = build_html_email(results, today, extra_words)
