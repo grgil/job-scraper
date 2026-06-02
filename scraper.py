@@ -7,6 +7,7 @@ import smtplib
 import ssl
 import sys
 import time
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -361,6 +362,17 @@ EMORY_SITES = [
 TODAY = date.today() - timedelta(days=1)
 
 
+@dataclass
+class SiteResult:
+    name: str
+    jobs: list[dict]
+    skipped_excl: int
+    skipped_err: int
+    sort_warning: bool
+    newest_seen: date | None
+    email_bucket: str = "main"
+
+
 def _load_seen_jobs() -> set[str]:
     if SEEN_JOBS_FILE.exists():
         data = json.loads(SEEN_JOBS_FILE.read_text(encoding="utf-8"))
@@ -388,6 +400,12 @@ def _validate_env() -> None:
             f"Missing required .env variable(s): {', '.join(missing)}\n"
             f"Copy .env.example to .env and fill in your credentials."
         )
+
+
+def _loc_qualifies(location: str, keywords: set[str] | None) -> bool:
+    if not keywords:
+        return True
+    return any(k in location.lower() for k in keywords)
 
 
 def _extract_location(json_ld: dict) -> str:
@@ -498,6 +516,19 @@ async def _get_job_details(page, job_url: str) -> dict | None:
 # Phenom People (UVA Health)
 # ---------------------------------------------------------------------------
 
+_PHENOM_JOB_LINKS_JS = """() => {
+    const seen = new Set();
+    const results = [];
+    document.querySelectorAll('a[href*="/job/"]').forEach(a => {
+        if (seen.has(a.href)) return;
+        seen.add(a.href);
+        const title = (a.innerText || a.textContent || '').trim();
+        if (title.length > 8) results.push({ title, url: a.href });
+    });
+    return results;
+}"""
+
+
 async def _get_job_links(page, url: str, categories: list[str] | None = None) -> list[dict]:
     await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
 
@@ -599,17 +630,7 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
         _log("  WARNING: Timed out waiting for job links with content")
         return []
 
-    return await page.evaluate("""() => {
-        const seen = new Set();
-        const results = [];
-        document.querySelectorAll('a[href*="/job/"]').forEach(a => {
-            if (seen.has(a.href)) return;
-            seen.add(a.href);
-            const title = (a.innerText || a.textContent || '').trim();
-            if (title.length > 8) results.push({ title, url: a.href });
-        });
-        return results;
-    }""")
+    return await page.evaluate(_PHENOM_JOB_LINKS_JS)
 
 
 async def _get_next_page_links(search_page) -> list[dict]:
@@ -640,17 +661,7 @@ async def _get_next_page_links(search_page) -> list[dict]:
         _log("  WARNING: Next page did not load new content")
         return []
 
-    return await search_page.evaluate("""() => {
-        const seen = new Set();
-        const results = [];
-        document.querySelectorAll('a[href*="/job/"]').forEach(a => {
-            if (seen.has(a.href)) return;
-            seen.add(a.href);
-            const title = (a.innerText || a.textContent || '').trim();
-            if (title.length > 8) results.push({ title, url: a.href });
-        });
-        return results;
-    }""")
+    return await search_page.evaluate(_PHENOM_JOB_LINKS_JS)
 
 
 async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
@@ -680,13 +691,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
                 if newest_seen is None or dp > newest_seen:
                     newest_seen = dp
                 if dp >= since_date:
-                    loc = (details.get("location") or "").lower()
-                    loc_kw = site.get("location_keywords", set())
-                    if loc_kw:
-                        qualifies = any(k in loc for k in loc_kw)
-                    else:
-                        qualifies = True
-                    if qualifies:
+                    if _loc_qualifies(details.get("location", ""), site.get("location_keywords")):
                         results.append({**job, **details})
                 if dp >= since_date:
                     page_matches += 1
@@ -870,7 +875,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                         dp = cxs_dp
                         loc = cxs_loc
 
-                    if loc_kw and not any(k in loc for k in loc_kw):
+                    if not _loc_qualifies(loc, loc_kw):
                         page_dates.append(dp)
                         if dp >= since_date:
                             page_matches += 1
@@ -901,12 +906,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     if newest_seen is None or dp > newest_seen:
                         newest_seen = dp
                     if dp >= since_date:
-                        loc = (details.get("location") or "").lower()
-                        if loc_kw:
-                            qualifies = any(k in loc for k in loc_kw)
-                        else:
-                            qualifies = True
-                        if qualifies:
+                        if _loc_qualifies(details.get("location", ""), loc_kw):
                             results.append({**job, **details})
                     if dp >= since_date:
                         page_matches += 1
@@ -1161,14 +1161,8 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
 
                     if newest_seen is None or dp > newest_seen:
                         newest_seen = dp
-                    if dp >= since_date:
-                        loc_lower = location.lower()
-                        if location_keywords:
-                            qualifies = any(kw in loc_lower for kw in location_keywords)
-                        else:
-                            qualifies = True
-                        if qualifies:
-                            all_results.append({
+                    if dp >= since_date and _loc_qualifies(location, location_keywords):
+                        all_results.append({
                                 "title": job["title"], "url": job["url"],
                                 "date_posted": dp, "location": location,
                                 "employment_type": employment_type,
@@ -1291,8 +1285,7 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                 city_slug = f"{city.lower().replace(' ', '-')}-{state.lower()}" if city and state else "remote"
                 job_url = f"https://emory.jobs/{city_slug}/{title_slug}/{guid}/job/"
                 location = loc_exact or (f"{city}, {state}" if city and state else city or state)
-                loc_str = location.lower()
-                if loc_kw and not any(k in loc_str for k in loc_kw):
+                if not _loc_qualifies(location, loc_kw):
                     continue
 
                 results.append({
@@ -1340,6 +1333,17 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
         return results, skipped_excl, skipped_err, newest_seen
     finally:
         await page.close()
+
+
+# ---------------------------------------------------------------------------
+# Scraper registry — wire each site to its function after all are defined.
+# _run_site reads site["scraper"] so main dispatches uniformly.
+# ---------------------------------------------------------------------------
+
+for _s in SITES:         _s["scraper"] = scrape_site
+for _s in WORKDAY_SITES: _s["scraper"] = scrape_workday_site
+for _s in ICIMS_SITES:   _s["scraper"] = scrape_icims_site
+for _s in EMORY_SITES:   _s["scraper"] = scrape_emory_site
 
 
 # ---------------------------------------------------------------------------
@@ -1402,6 +1406,42 @@ def _is_excluded_title(title: str, extra_words: frozenset[str] = frozenset()) ->
         return True
     words = TITLE_EXCLUDE_WORDS | extra_words
     return any(re.search(rf'\b{re.escape(w)}\b', t) for w in words)
+
+
+# ---------------------------------------------------------------------------
+# Result helpers — module-level so they're testable and not re-declared in main
+# ---------------------------------------------------------------------------
+
+def _has_content(results: list["SiteResult"], extra_words: frozenset[str] = frozenset()) -> bool:
+    visible = sum(1 for r in results for j in r.jobs if not _is_excluded_title(j["title"], extra_words))
+    return visible > 0 or any(r.skipped_excl or r.skipped_err or r.sort_warning for r in results)
+
+
+def _filter_primary(results: list["SiteResult"]) -> list["SiteResult"]:
+    return [
+        replace(r, jobs=[j for j in r.jobs
+                         if not _is_excluded_title(j["title"])
+                         and _priority_score(j, r.name) == "primary"])
+        for r in results
+    ]
+
+
+def _dedup(results: list["SiteResult"], seen_urls: set[str], seen_record: dict, today_str: str) -> list["SiteResult"]:
+    deduped = []
+    for r in results:
+        fresh = []
+        for j in r.jobs:
+            url = j.get("url", "")
+            if url in seen_urls:
+                _log(f"  SEEN — skipping {j.get('title', '')[:60]}")
+            else:
+                fresh.append(j)
+                if _priority_score(j, r.name) == "primary":
+                    seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": r.name}
+                else:
+                    seen_record[url] = today_str
+        deduped.append(replace(r, jobs=fresh))
+    return deduped
 
 
 # ---------------------------------------------------------------------------
@@ -1475,27 +1515,27 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped_excl: int, ski
     )
 
 
-def build_html_email(results: list[tuple[str, list[dict], int, int, bool, date | None]], today: date, extra_words: frozenset[str] = frozenset()) -> str:
-    total = sum(1 for _, jobs, _, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
+def build_html_email(results: list[SiteResult], today: date, extra_words: frozenset[str] = frozenset()) -> str:
+    total = sum(1 for r in results for j in r.jobs if not _is_excluded_title(j["title"], extra_words))
     date_str = today.strftime('%b %d, %Y')
 
     richmond_primaries: list[tuple[str, dict]] = []
     other_primaries: list[tuple[str, dict]] = []
-    for site_name, jobs, _, _, _, _ in results:
-        for job in jobs:
+    for r in results:
+        for job in r.jobs:
             if _is_excluded_title(job["title"], extra_words):
                 continue
-            if _priority_score(job, site_name) == "primary":
-                if site_name in PRIORITY_CONFIG["richmond_orgs"]:
-                    richmond_primaries.append((site_name, job))
+            if _priority_score(job, r.name) == "primary":
+                if r.name in PRIORITY_CONFIG["richmond_orgs"]:
+                    richmond_primaries.append((r.name, job))
                 else:
-                    other_primaries.append((site_name, job))
+                    other_primaries.append((r.name, job))
     top_matches_html = _build_top_matches(richmond_primaries, other_primaries)
 
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
-        _build_site_section(site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen, extra_words)
-        for site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen in results
-        if jobs
+        _build_site_section(r.name, r.jobs, r.skipped_excl, r.skipped_err, r.sort_warning, r.newest_seen, extra_words)
+        for r in results
+        if r.jobs
     )
     return f"""<!DOCTYPE html>
 <html>
@@ -1510,8 +1550,8 @@ def build_html_email(results: list[tuple[str, list[dict], int, int, bool, date |
 </html>"""
 
 
-def send_email(results: list[tuple[str, list[dict], int, int, bool, date | None]], today: date, label: str = "", extra_words: frozenset[str] = frozenset()) -> None:
-    total = sum(1 for _, jobs, _, _, _, _ in results for j in jobs if not _is_excluded_title(j["title"], extra_words))
+def send_email(results: list[SiteResult], today: date, label: str = "", extra_words: frozenset[str] = frozenset()) -> None:
+    total = sum(1 for r in results for j in r.jobs if not _is_excluded_title(j["title"], extra_words))
     tag = f" [{label}]" if label else ""
     subject = f"[Job Alert{tag}] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
     html = build_html_email(results, today, extra_words)
@@ -1535,25 +1575,24 @@ def send_email(results: list[tuple[str, list[dict], int, int, bool, date | None]
 
 async def _run_site(
     sem: asyncio.Semaphore,
-    scraper_fn,
     browser,
     site: dict,
     since_date: date,
-) -> tuple:
+) -> SiteResult:
     async with sem:
         _t0 = time.perf_counter()
         try:
-            jobs, skipped_excl, skipped_err, newest_seen = await scraper_fn(browser, site, since_date)
+            jobs, skipped_excl, skipped_err, newest_seen = await site["scraper"](browser, site, since_date)
             sort_warning = _sort_collapsed(jobs, newest_seen, since_date)
             if sort_warning:
                 _log(f"  {site['name']}: sort collapsed — flagging in email")
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped_excl} excl, {skipped_err} no-data, {_elapsed}s — {_page_freshness(newest_seen)}")
-            return (site["name"], jobs, skipped_excl, skipped_err, sort_warning, newest_seen, site.get("email_bucket", "main"))
+            return SiteResult(site["name"], jobs, skipped_excl, skipped_err, sort_warning, newest_seen, site.get("email_bucket", "main"))
         except Exception as e:
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"  {site['name']}: ERROR after {_elapsed}s — {e}")
-            return (site["name"], [], 0, False, None, site.get("email_bucket", "main"))
+            return SiteResult(site["name"], [], 0, 0, False, None, site.get("email_bucket", "main"))
 
 
 async def main() -> None:
@@ -1605,14 +1644,9 @@ async def main() -> None:
                 # Phenom (serial per-job detail fetches, minutes each) >
                 # iCIMS/Emory (API intercept, very fast) >
                 # Workday (jobFamily-filtered CXS, quick date-exhaustion stop).
-                ordered = (
-                    [(scrape_site, s) for s in _sites]
-                    + [(scrape_icims_site, s) for s in _icims]
-                    + [(scrape_emory_site, s) for s in _emory]
-                    + [(scrape_workday_site, s) for s in _workday]
-                )
-                tasks = [_run_site(sem, fn, browser, site, since_date) for fn, site in ordered]
-                results = list(await asyncio.gather(*tasks))
+                ordered = _sites + _icims + _emory + _workday
+                tasks = [_run_site(sem, browser, s, since_date) for s in ordered]
+                results: list[SiteResult] = list(await asyncio.gather(*tasks))
 
                 seen_record = (
                     json.loads(SEEN_JOBS_FILE.read_text(encoding="utf-8"))
@@ -1624,19 +1658,17 @@ async def main() -> None:
                     week_cutoff = (date.today() - timedelta(days=7)).isoformat()
 
                     # All main results — no dedup filter, include seen jobs
-                    all_week = [(n, j, sk_e, sk_p, sw, ns)
-                                for n, j, sk_e, sk_p, sw, ns, bkt in results
-                                if bkt == "main"]
+                    all_week: list[SiteResult] = [r for r in results if r.email_bucket == "main"]
 
                     # Add any new URLs found by rescrape to seen_record
                     rescrape_urls: set[str] = set()
-                    for name, jobs, _, _, _, _ in all_week:
-                        for j in jobs:
+                    for r in all_week:
+                        for j in r.jobs:
                             url = j.get("url", "")
                             rescrape_urls.add(url)
                             if url not in seen_record:
-                                if _priority_score(j, name) == "primary":
-                                    seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": name}
+                                if _priority_score(j, r.name) == "primary":
+                                    seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": r.name}
                                 else:
                                     seen_record[url] = today_str
 
@@ -1656,33 +1688,18 @@ async def main() -> None:
 
                     # Merge missed jobs back into their site slot (or append a new slot)
                     for site_name, missed_jobs in missed_by_site.items():
-                        for i, (n, j, sk_e, sk_p, sw, ns) in enumerate(all_week):
-                            if n == site_name:
-                                all_week[i] = (n, j + missed_jobs, sk_e, sk_p, sw, ns)
+                        for i, r in enumerate(all_week):
+                            if r.name == site_name:
+                                all_week[i] = replace(r, jobs=r.jobs + missed_jobs)
                                 break
                         else:
-                            all_week.append((site_name, missed_jobs, 0, 0, False, None))
-
-                    def _filter_primary(bucket_results):
-                        return [
-                            (name,
-                             [j for j in jobs
-                              if not _is_excluded_title(j["title"])
-                              and _priority_score(j, name) == "primary"],
-                             sk_e, sk_p, sort_warn, newest)
-                            for name, jobs, sk_e, sk_p, sort_warn, newest in bucket_results
-                        ]
-
-                    def _has_content(bucket_results, extra_words=frozenset()):
-                        visible = sum(1 for _, jobs, _, _, _, _ in bucket_results
-                                      for j in jobs if not _is_excluded_title(j["title"], extra_words))
-                        return visible > 0 or any(sk_e or sk_p or sw for _, _, sk_e, sk_p, sw, _ in bucket_results)
+                            all_week.append(SiteResult(site_name, missed_jobs, 0, 0, False, None))
 
                     primary_results = _filter_primary(all_week)
-                    for _name, _jobs, _, _, _, _ in primary_results:
-                        for _j in _jobs:
+                    for r in primary_results:
+                        for _j in r.jobs:
                             if not _is_excluded_title(_j["title"]):
-                                _log(f"  WEEKLY PRIMARY ({_name}) — {_j['title'][:70]}")
+                                _log(f"  WEEKLY PRIMARY ({r.name}) — {_j['title'][:70]}")
                     if no_email:
                         if _has_content(primary_results):
                             html = build_html_email(primary_results, since_date)
@@ -1697,31 +1714,8 @@ async def main() -> None:
 
                 else:
                     seen_urls = _load_seen_jobs()
-
-                    def _dedup(bucket_results):
-                        deduped = []
-                        for name, jobs, sk_e, sk_p, sort_warn, newest in bucket_results:
-                            fresh = []
-                            for j in jobs:
-                                url = j.get("url", "")
-                                if url in seen_urls:
-                                    _log(f"  SEEN — skipping {j.get('title','')[:60]}")
-                                else:
-                                    fresh.append(j)
-                                    if _priority_score(j, name) == "primary":
-                                        seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": name}
-                                    else:
-                                        seen_record[url] = today_str
-                            deduped.append((name, fresh, sk_e, sk_p, sort_warn, newest))
-                        return deduped
-
-                    main_results  = _dedup([(n, j, sk_e, sk_p, sw, ns) for n, j, sk_e, sk_p, sw, ns, bkt in results if bkt == "main"])
-                    payer_results = _dedup([(n, j, sk_e, sk_p, sw, ns) for n, j, sk_e, sk_p, sw, ns, bkt in results if bkt == "payer"])
-
-                    def _has_content(bucket_results, extra_words=frozenset()):
-                        visible = sum(1 for _, jobs, _, _, _, _ in bucket_results
-                                      for j in jobs if not _is_excluded_title(j["title"], extra_words))
-                        return visible > 0 or any(sk_e or sk_p or sw for _, _, sk_e, sk_p, sw, _ in bucket_results)
+                    main_results  = _dedup([r for r in results if r.email_bucket == "main"],  seen_urls, seen_record, today_str)
+                    payer_results = _dedup([r for r in results if r.email_bucket == "payer"], seen_urls, seen_record, today_str)
 
                     if no_email:
                         for label, bucket, extra in [

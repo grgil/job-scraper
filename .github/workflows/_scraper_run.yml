@@ -1,0 +1,57 @@
+name: Scraper run (reusable)
+
+# Single source of truth for setup, execution, and seen_jobs commit.
+# Called by scraper.yml (daily) and scraper_weekly.yml (weekly recap).
+# Any change to Python version, deps, or commit step only needs to happen here.
+
+on:
+  workflow_call:
+    inputs:
+      run_args:
+        description: "Extra args to pass to scraper.py (e.g. --weekly)"
+        type: string
+        default: ""
+      commit_message:
+        description: "Commit message for the seen_jobs cache update"
+        type: string
+        required: true
+    secrets:
+      EMAIL_FROM:
+        required: true
+      EMAIL_TO:
+        required: true
+      EMAIL_APP_PASS:
+        required: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browser
+        run: playwright install chromium --with-deps
+
+      - name: Run scraper
+        run: python scraper.py ${{ inputs.run_args }}
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          EMAIL_APP_PASS: ${{ secrets.EMAIL_APP_PASS }}
+
+      - name: Commit seen jobs cache
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f seen_jobs.json
+          git diff --cached --quiet || git commit -m "${{ inputs.commit_message }}"
+          git pull --rebase origin main
+          git push
