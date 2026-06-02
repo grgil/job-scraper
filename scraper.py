@@ -1494,7 +1494,7 @@ def build_html_email(results: list[tuple[str, list[dict], int, int, bool, date |
 
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
         _build_site_section(site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen, extra_words)
-        for site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen, _ in results
+        for site_name, jobs, skipped_excl, skipped_err, sort_warning, newest_seen in results
         if jobs
     )
     return f"""<!DOCTYPE html>
