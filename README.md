@@ -6,34 +6,6 @@ Built with Claude (Anthropic) as a coding collaborator. I drove the requirements
 
 ---
 
-## Email digests
-
-| Digest | Contents |
-|--------|----------|
-| **Main** | All active sites — one digest regardless of remote or on-site scope |
-| **Payer** | Humana, Elevance, Cigna, Solventum, Veradigm, Waystar *(commented out — activate when ready)* |
-
-`email_bucket` on each site config is `"main"` or `"payer"` and controls which digest the results route to. `remote_only=True` and `location_keywords` are post-scrape filters; `categories` (Phenom) and URL-level params (Workday/iCIMS) are pre-scrape filters.
-
-### Active sites
-
-| Site | ATS | Access method | Filter |
-|------|-----|--------------|--------|
-| UVA Health | Phenom | DOM + JSON-LD | Category facet (5 categories) |
-| VCU Health | Phenom | DOM + JSON-LD | Category facet (6 categories) |
-| Duke Health | Phenom | DOM + JSON-LD | Category facet (4 categories) |
-| Bon Secours | Workday | CXS intercept | None — full site |
-| Carilion Clinic | Workday | CXS intercept | `jobFamilyGroup` ×4 |
-| Prisma Health | Workday | CXS intercept | `jobFamilyGroup` ×4 |
-| Wellstar Health | Workday | CXS intercept | `jobFamilyGroup` ×7 |
-| Atrium Health | Workday | CXS intercept | `jobFamilyGroup` ×8 |
-| MUSC | Workday | CXS + detail pages | `jobFamily` ×8 |
-| VUMC | Workday | CXS + detail pages | `jobFamilyGroup` ×5 |
-| Sentara | Workday | CXS intercept | `jobFamilyGroup` ×4 |
-| Shepherd Center | Workday | CXS intercept | None — small site |
-| Ascension | iCIMS | Card-embedded | `searchCategory` ×3 |
-| Emory Healthcare | Jobsyn | API intercept | None — full site |
-
 **Access method key**
 
 | Method | How it works |

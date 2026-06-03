@@ -49,7 +49,6 @@ SITES = [
             "Managerial & Supervisory",
         ],
         "max_pages": 20,
-        "email_bucket": "main",
     },
     {
         "name": "VCU Health",
@@ -65,7 +64,6 @@ SITES = [
             "Administrative Support",
             "Finance",
         ],
-        "email_bucket": "main",
     },
     {
         "name": "Duke Health",
@@ -80,7 +78,6 @@ SITES = [
             "Administrative and Support Services",
         ],
         "max_pages": 12,
-        "email_bucket": "main",
     },
 ]
 
@@ -98,7 +95,7 @@ WORKDAY_SITES = [
          "&jobFamily=63ee0f7615fd10010766102ddb7a0000"
          "&jobFamily=b6f39ab6e17a1010bc655f3564f60000"
      ),
-     "max_pages": 6, "email_bucket": "main"},
+     "max_pages": 6},
     {"name": "VUMC",
      "url": (
          "https://vumc.wd1.myworkdayjobs.com/vumccareers"
@@ -108,7 +105,7 @@ WORKDAY_SITES = [
          "&jobFamilyGroup=aa4bc8a45bec1001f06b685af99d0000"
          "&jobFamilyGroup=aa4bc8a45bec1001f06b638780e10000"
      ),
-     "max_pages": 8, "email_bucket": "main"},
+     "max_pages": 8},
     # CXS date-exhaustion sites — fast, run after slow sites have claimed slots
     {"name": "Prisma Health",
      "url": (
@@ -118,7 +115,7 @@ WORKDAY_SITES = [
          "&jobFamilyGroup=ee936705568e013fff99a8b1ae03db74"
          "&jobFamilyGroup=ee936705568e01a412a842d6df0391c3"
      ),
-     "max_pages": 12, "email_bucket": "main"},
+     "max_pages": 12},
     {"name": "Sentara",
      "url": (
          "https://sentara.wd1.myworkdayjobs.com/en-US/SCS"
@@ -127,7 +124,7 @@ WORKDAY_SITES = [
          "&jobFamilyGroup=501d9eef9f7610009e808c09d90e0000"
          "&jobFamilyGroup=cf38025fbfe110009e80fb0da5ac0000"
      ),
-     "max_pages": 6, "email_bucket": "main"},
+     "max_pages": 6},
     {"name": "Wellstar Health (Atlanta)",
      "url": (
          "https://wellstar.wd1.myworkdayjobs.com/wellstarcareers"
@@ -139,7 +136,7 @@ WORKDAY_SITES = [
          "&jobFamilyGroup=36c48bb8fdf7102678759eded26a0001"
          "&jobFamilyGroup=36c48bb8fdf710267875dea8593e0000"
      ),
-     "max_pages": 8, "email_bucket": "main"},
+     "max_pages": 8},
     {"name": "Atrium Health (Charlotte)",
      "url": (
          "https://aah.wd5.myworkdayjobs.com/External"
@@ -152,7 +149,7 @@ WORKDAY_SITES = [
          "&jobFamilyGroup=1c18ea8cf0e80110c66793b407520000"
          "&jobFamilyGroup=1c18ea8cf0e80110c6610267df590000"
      ),
-     "max_pages": 8, "email_bucket": "main"},
+     "max_pages": 8},
     {"name": "Carilion Clinic",
      "url": (
          "https://carilionclinic.wd12.myworkdayjobs.com/en-US/External_Careers"
@@ -161,18 +158,9 @@ WORKDAY_SITES = [
          "&jobFamilyGroup=01a109d50e5f10072caa9a274e930000"
          "&jobFamilyGroup=01a109d50e5f10072caa9f9111e20000"
      ),
-     "max_pages": 12, "email_bucket": "main"},
-    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers", "email_bucket": "main"},
-    {"name": "Shepherd Center",           "url": "https://shepherd.wd5.myworkdayjobs.com/ShepherdCenter",                                             "email_bucket": "main"},
-    # Payer / vendor — commented out; activate when payer digest is ready
-    # {"name": "Humana",          "url": "https://humana.wd5.myworkdayjobs.com/Humana_External_Career_Site",  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
-    # {"name": "Elevance Health", "url": "https://elevancehealth.wd1.myworkdayjobs.com/ANT",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
-    # {"name": "Cigna",           "url": "https://cigna.wd5.myworkdayjobs.com/cignacareers",                  "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
-    # {"name": "Solventum (3M HIS)", "url": "https://healthcare.wd1.myworkdayjobs.com/Search",               "remote_only": True, "max_pages": 12, "email_bucket": "payer"},
-    # {"name": "Veradigm",        "url": "https://veradigm.wd12.myworkdayjobs.com/VR",                       "remote_only": True, "max_pages": 6,  "email_bucket": "payer"},
-    # {"name": "Waystar (Atlanta / Louisville)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",
-    #  "location_keywords": {"atlanta", "louisville"}, "max_pages": 6, "email_bucket": "payer"},
-    # {"name": "Waystar (Remote)", "url": "https://waystar.wd1.myworkdayjobs.com/Waystar",                   "remote_only": True, "max_pages": 6,  "email_bucket": "payer"},
+     "max_pages": 12},
+    {"name": "Bon Secours",               "url": "https://easyservice.wd5.myworkdayjobs.com/BonSecoursMercyHealthCareers"},
+    {"name": "Shepherd Center",           "url": "https://shepherd.wd5.myworkdayjobs.com/ShepherdCenter"},
 ]
 
 # Title exclusion filter — applied at email-build time, not scrape time
@@ -246,7 +234,6 @@ TITLE_EXCLUDE_WORDS = {
     "cook",
     "president",   # also matches vice president
 }
-PAYER_EXCLUDE_WORDS = {"lead", "senior", "manager", "director", "principal"}
 
 # ---------------------------------------------------------------------------
 # Priority scoring config — tune patterns and org tiers here
@@ -344,7 +331,6 @@ ICIMS_SITES: list[dict] = [
             "https://ascensionjobs1-ascension.icims.com/jobs/search?ss=1&searchRelation=keyword_all&searchCategory=27596",
         ],
         "max_pages": 6,
-        "email_bucket": "main",
     },
 ]
 
@@ -355,7 +341,6 @@ EMORY_SITES = [
         "name": "Emory Healthcare",
         "page_url": "https://emory.jobs/jobs/",
         "max_pages": 20,
-        "email_bucket": "main",
     },
 ]
 
@@ -370,7 +355,6 @@ class SiteResult:
     skipped_err: int
     sort_warning: bool
     newest_seen: date | None
-    email_bucket: str = "main"
 
 
 def _load_seen_jobs() -> set[str]:
@@ -1588,11 +1572,11 @@ async def _run_site(
                 _log(f"  {site['name']}: sort collapsed — flagging in email")
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped_excl} excl, {skipped_err} no-data, {_elapsed}s — {_page_freshness(newest_seen)}")
-            return SiteResult(site["name"], jobs, skipped_excl, skipped_err, sort_warning, newest_seen, site.get("email_bucket", "main"))
+            return SiteResult(site["name"], jobs, skipped_excl, skipped_err, sort_warning, newest_seen)
         except Exception as e:
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"  {site['name']}: ERROR after {_elapsed}s — {e}")
-            return SiteResult(site["name"], [], 0, 0, False, None, site.get("email_bucket", "main"))
+            return SiteResult(site["name"], [], 0, 0, False, None)
 
 
 async def main() -> None:
@@ -1657,8 +1641,7 @@ async def main() -> None:
                 if weekly:
                     week_cutoff = (date.today() - timedelta(days=7)).isoformat()
 
-                    # All main results — no dedup filter, include seen jobs
-                    all_week: list[SiteResult] = [r for r in results if r.email_bucket == "main"]
+                    all_week: list[SiteResult] = list(results)
 
                     # Add any new URLs found by rescrape to seen_record
                     rescrape_urls: set[str] = set()
@@ -1714,24 +1697,17 @@ async def main() -> None:
 
                 else:
                     seen_urls = _load_seen_jobs()
-                    main_results  = _dedup([r for r in results if r.email_bucket == "main"],  seen_urls, seen_record, today_str)
-                    payer_results = _dedup([r for r in results if r.email_bucket == "payer"], seen_urls, seen_record, today_str)
+                    main_results = _dedup(list(results), seen_urls, seen_record, today_str)
 
                     if no_email:
-                        for label, bucket, extra in [
-                            ("Main",  main_results,  frozenset()),
-                            ("Payer", payer_results, frozenset(PAYER_EXCLUDE_WORDS)),
-                        ]:
-                            if _has_content(bucket, extra):
-                                html = build_html_email(bucket, since_date, extra)
-                                out = BASE_DIR / f"preview_{label.lower()}.html"
-                                out.write_text(html, encoding="utf-8")
-                                _log(f"  --no-email: wrote {out.name}")
+                        if _has_content(main_results):
+                            html = build_html_email(main_results, since_date)
+                            out = BASE_DIR / "preview_main.html"
+                            out.write_text(html, encoding="utf-8")
+                            _log(f"  --no-email: wrote {out.name}")
                     else:
                         if _has_content(main_results):
                             send_email(main_results, TODAY)
-                        if _has_content(payer_results, frozenset(PAYER_EXCLUDE_WORDS)):
-                            send_email(payer_results, TODAY, label="Payer", extra_words=frozenset(PAYER_EXCLUDE_WORDS))
 
             finally:
                 _save_seen_jobs(seen_record)
