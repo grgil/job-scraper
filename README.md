@@ -1,6 +1,8 @@
 # Health Job Scraper
 
-Daily and weekly job alert scraper covering health system portals across Workday, Phenom People, iCIMS, and DirectEmployers (Jobsyn) ATS platforms. Uses Playwright (headless Chromium) for JavaScript-rendered pages. Runs automatically via GitHub Actions.
+A personal job search automation tool built to solve a real problem: health system careers pages don't have good cross-site alerting, and manually checking 14 portals daily isn't realistic. The scraper monitors those portals across four ATS platforms (Workday, Phenom People, iCIMS, DirectEmployers), filters out clinical and non-target roles, scores matches by relevance, and delivers a daily digest email — running unattended on a GitHub Actions cron schedule.
+
+Built with Claude (Anthropic) as a coding collaborator. I drove the requirements, design decisions, and debugging; Claude handled implementation I didn't yet have fluency in. The goal was a working tool I understood well enough to maintain and extend independently.
 
 ---
 
