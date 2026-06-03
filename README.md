@@ -6,6 +6,8 @@ Built with Claude (Anthropic) as a coding collaborator. I drove the requirements
 
 ---
 
+## How it works
+
 **Access method key**
 
 | Method | How it works |
@@ -103,7 +105,6 @@ Prints a per-site table with columns: elapsed seconds, qualifying count, skipped
 | `batch_refresh` | Workday portal served all-same-date results (refresh artifact) |
 | `sort_collapsed` | Sort order failed server-side; results unreliable |
 
-Requires at least one run after the timing instrumentation was added (May 2026).
 
 ---
 
@@ -117,4 +118,4 @@ Requires at least one run after the timing instrumentation was added (May 2026).
 
 **New ATS / selectors changed** — run `inspect_selectors.py` with the portal URL to audit selectors and XHR patterns before editing the scraper. Previously investigated orgs that are blocked or require custom scrapers are documented in the `inspect_selectors.py` header.
 
-**Workday location IDs changed** — the opaque hash IDs in `?locations=`, `?primaryLocation=`, `?remoteType=` etc. are extracted from the Workday UI facet URLs. If a site stops returning the expected location-filtered results, re-inspect the portal, apply the filters manually in the browser, and extract the updated IDs from the URL.
+**Workday jobFamilyGroup IDs changed** — the opaque hash IDs in `?jobFamilyGroup=` params are extracted from the Workday portal UI facet URLs. If a site stops returning expected results, re-inspect the portal, apply the job family filters manually in the browser, and extract the updated IDs from the URL.
