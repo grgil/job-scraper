@@ -1583,6 +1583,7 @@ async def main() -> None:
     parser = argparse.ArgumentParser(description="Health job scraper")
     parser.add_argument("--since", metavar="YYYY-MM-DD", help="Override since-date (default: yesterday)")
     parser.add_argument("--no-email", action="store_true", help="Skip email; write HTML previews to disk instead")
+    parser.add_argument("--no-save",  action="store_true", help="Skip writing seen_jobs.json (safe for local runs)")
     parser.add_argument("--weekly", action="store_true", help="Weekly recap: 7-day lookback, primary-only, updates seen_jobs")
     args = parser.parse_args()
 
@@ -1593,6 +1594,7 @@ async def main() -> None:
         else TODAY
     )
     no_email = args.no_email
+    no_save  = args.no_save
 
     _validate_env()
     _rotate_log()
@@ -1710,7 +1712,8 @@ async def main() -> None:
                             send_email(main_results, TODAY)
 
             finally:
-                _save_seen_jobs(seen_record)
+                if not no_save:
+                    _save_seen_jobs(seen_record)
                 await browser.close()
     except Exception as e:
         _log(f"ERROR: {e}")
