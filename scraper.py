@@ -1698,8 +1698,11 @@ async def main() -> None:
                             _log("  Weekly recap: no primary matches this week, skipping email")
 
                 else:
+                    qualifying_count = sum(len(r.jobs) for r in results)
                     seen_urls = _load_seen_jobs()
                     main_results = _dedup(list(results), seen_urls, seen_record, today_str)
+                    new_count = sum(len(r.jobs) for r in main_results)
+                    _log(f"Dedup: {qualifying_count - new_count}/{qualifying_count} suppressed ({new_count} new)")
 
                     if no_email:
                         if _has_content(main_results):
