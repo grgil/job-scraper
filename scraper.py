@@ -60,10 +60,9 @@ SITES = [
         "categories": [
             "Revenue Cycle",
             "Information Technology",
-            "Health System Management/Operations",
-            "Quality & Safety",
             "Administrative Support",
             "Finance",
+            "Professional",
         ],
     },
     {
@@ -384,14 +383,40 @@ class SiteResult:
     newest_seen: date | None
 
 
+_WORKDAY_REQID_RE = re.compile(r"_([A-Z]\d+(?:-\d+)?)$", re.IGNORECASE)
+
+
+def _workday_req_id(url: str) -> str | None:
+    """Return a stable 'domain:reqid' key for a Workday job URL, or None.
+
+    Workday externalPath slugs (title and location) are not guaranteed stable
+    across API calls for the same posting — they can change when a job title is
+    edited or when the server uses a different location slug. The req_id (the
+    _R######  suffix) IS stable. Using it as a secondary dedup key prevents the
+    same posting from slipping through dedup due to a slug change between runs.
+    """
+    if "myworkdayjobs.com" not in url:
+        return None
+    segment = url.split("?")[0].rstrip("/").rsplit("/", 1)[-1]
+    m = _WORKDAY_REQID_RE.search(segment)
+    if not m:
+        return None
+    domain = re.sub(r"https?://", "", url).split("/")[0]
+    return f"{domain}:{m.group(1)}"
+
+
 def _load_seen_jobs() -> set[str]:
     if SEEN_JOBS_FILE.exists():
         data = json.loads(SEEN_JOBS_FILE.read_text(encoding="utf-8"))
         cutoff = (date.today() - timedelta(days=SEEN_MAX_AGE_DAYS)).isoformat()
-        return {
-            url for url, v in data.items()
-            if (v if isinstance(v, str) else v["first_seen"]) >= cutoff
-        }
+        keys: set[str] = set()
+        for url, v in data.items():
+            if (v if isinstance(v, str) else v["first_seen"]) >= cutoff:
+                keys.add(url)
+                req_key = _workday_req_id(url)
+                if req_key:
+                    keys.add(req_key)
+        return keys
     return set()
 
 
@@ -628,6 +653,9 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
         for cat in categories:
             try:
                 loc = page.locator('[data-ph-at-id="facet-results-item"]').filter(has_text=cat).first
+                if not await loc.is_visible():
+                    _log(f"  Category not in facets: {cat!r}")
+                    continue
                 await loc.scroll_into_view_if_needed(timeout=3_000)
                 await loc.click(timeout=5_000)
                 await page.wait_for_timeout(300)
@@ -668,13 +696,13 @@ async def _get_next_page_links(search_page) -> list[dict]:
                 const a = document.querySelector('a[href*="/job/"]');
                 return a && a.href !== {repr(first_href)};
             }}""",
-            timeout=20_000,
+            timeout=35_000,
         )
         await search_page.wait_for_function(
             """() => Array.from(document.querySelectorAll('a[href*="/job/"]'))
                 .filter(a => (a.innerText || a.textContent || '').trim().length > 8)
                 .length >= 5""",
-            timeout=15_000,
+            timeout=25_000,
         )
     except PlaywrightTimeoutError:
         _warn("next page did not load")
@@ -955,17 +983,22 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
 
             # ── Advance to next page ──────────────────────────────────────────
             # _get_workday_next_page clicks, waits for DOM refresh, and returns links.
-            # For CXS: the wait also guarantees the CXS response has arrived.
+            # CXS note: the API response often fires before the DOM updates. If the
+            # DOM-change wait times out but _cxs_buf is already populated, we still
+            # have valid data — don't break (VUMC consistently hits this on page 2→3).
             next_links = await _get_workday_next_page(search_page)
             if not next_links:
-                _log("  No more pages")
-                break
-            if use_cxs and not _cxs_buf:
-                # Next-page DOM changed but CXS didn't fire — fall back for remaining pages
+                if use_cxs and _cxs_buf:
+                    pass  # CXS response arrived before DOM settled — continue
+                else:
+                    _log("  No more pages")
+                    break
+            if use_cxs and not _cxs_buf and next_links:
+                # DOM changed but CXS didn't fire — fall back for remaining pages
                 _warn(f"CXS silent on page {page_num}")
                 use_cxs = False
                 dom_pending = next_links
-            elif not use_cxs:
+            elif not use_cxs and next_links:
                 dom_pending = next_links
 
         max_results = site.get("max_results")
@@ -1420,14 +1453,18 @@ def _dedup(results: list["SiteResult"], seen_urls: set[str], seen_record: dict, 
         fresh = []
         for j in r.jobs:
             url = j.get("url", "")
-            if url in seen_urls:
+            req_key = _workday_req_id(url)
+            if url in seen_urls or (req_key and req_key in seen_urls):
                 _log(f"  SEEN — skipping {j.get('title', '')[:60]}")
             else:
                 fresh.append(j)
                 if _priority_score(j, r.name) == "primary":
-                    seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": r.name}
+                    v: str | dict = {"first_seen": today_str, "title": j["title"], "site": r.name}
                 else:
-                    seen_record[url] = today_str
+                    v = today_str
+                seen_record[url] = v
+                if req_key:
+                    seen_record[req_key] = v  # stable key survives URL slug changes
         deduped.append(replace(r, jobs=fresh))
     return deduped
 
