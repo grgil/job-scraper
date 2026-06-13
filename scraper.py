@@ -1,5 +1,6 @@
 import argparse
 import asyncio
+import contextvars
 import json
 import os
 import re
@@ -439,7 +440,7 @@ def _parse_posted_on(s: str) -> date | None:
     m = re.search(r"(\d+)\+?\s*day", t)
     if m:
         return date.today() - timedelta(days=int(m.group(1)))
-    _log(f"  WARN — unrecognized postedOn format: {s!r}")
+    _warn(f"unrecognized postedOn format: {s!r}")
     return None
 
 
@@ -457,6 +458,14 @@ def _log(message: str) -> None:
     print(entry)
     with LOG_FILE.open("a", encoding="utf-8") as f:
         f.write(entry + "\n")
+
+
+_site_ctx: contextvars.ContextVar[str] = contextvars.ContextVar("site", default="")
+
+
+def _warn(msg: str) -> None:
+    site = _site_ctx.get()
+    _log(f"  {site}: WARN — {msg}" if site else f"  WARN — {msg}")
 
 
 def _page_freshness(newest_seen: date | None) -> str:
@@ -550,7 +559,7 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
             "() => document.querySelectorAll('a[href*=\"/job/\"]').length > 0"
         )
         if not has_jobs:
-            _log("  WARNING: Sort dropdown not found and no job links — page may not have loaded")
+            _warn("sort dropdown not found")
             return []
         _log("  Sort dropdown not found — assuming URL-level sort is active, proceeding")
         has_sort_dropdown = False
@@ -586,7 +595,7 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
                 )
                 _log("  Result list refreshed after sort change")
             except PlaywrightTimeoutError:
-                _log("  WARNING: Sort re-render did not detect a change — results may be unsorted")
+                _warn("sort re-render no change")
         elif current_sort == '':
             _log("  Sort dropdown empty — sort likely URL-controlled, skipping")
 
@@ -625,7 +634,7 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
                 _log(f"  Category filter: {cat}")
                 clicked += 1
             except Exception as e:
-                _log(f"  WARN — category filter failed for {cat!r}: {e}")
+                _warn(f"category filter failed for {cat!r}")
         if clicked:
             await page.wait_for_timeout(2_500)  # let filtered results settle
 
@@ -637,7 +646,7 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
             timeout=30_000,
         )
     except PlaywrightTimeoutError:
-        _log("  WARNING: Timed out waiting for job links with content")
+        _warn("timed out waiting for job links")
         return []
 
     return await page.evaluate(_PHENOM_JOB_LINKS_JS)
@@ -668,13 +677,14 @@ async def _get_next_page_links(search_page) -> list[dict]:
             timeout=15_000,
         )
     except PlaywrightTimeoutError:
-        _log("  WARNING: Next page did not load new content")
+        _warn("next page did not load")
         return []
 
     return await search_page.evaluate(_PHENOM_JOB_LINKS_JS)
 
 
 async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
+    _site_ctx.set(site["name"])
     _log(f"Scraping {site['name']} (Phenom People) ...")
     search_page = await browser.new_page()
     detail_page = await _make_detail_page(browser)
@@ -759,7 +769,7 @@ async def _get_workday_next_page(page) -> list[dict]:
             timeout=15_000,
         )
     except PlaywrightTimeoutError:
-        _log("  WARN — Workday next page did not load new content")
+        _warn("next page did not load")
         return []
     return await page.evaluate("""() => {
         const seen = new Set();
@@ -788,6 +798,7 @@ _WORKDAY_DOM_LINKS_JS = """() => {
 
 
 async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
+    _site_ctx.set(site["name"])
     _log(f"Scraping {site['name']} (Workday) ...")
     search_page = await browser.new_page()
     detail_page = await _make_detail_page(browser)
@@ -829,7 +840,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                     timeout=30_000,
                 )
             except PlaywrightTimeoutError:
-                _log(f"  {site['name']}: WARN — job titles timed out")
+                _warn("job titles timed out")
                 return [], 0, None
 
         results = []
@@ -924,7 +935,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
             freshness = _page_freshness(newest_seen)
 
             if page_dates and len(set(page_dates)) == 1 and page_dates[0] >= date.today():
-                _log(f"  WARN — batch refresh suspected ({site['name']}): all dates = {page_dates[0]} — stopping")
+                _warn("batch refresh suspected")
                 break
 
             if page_matches == 0:
@@ -951,7 +962,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                 break
             if use_cxs and not _cxs_buf:
                 # Next-page DOM changed but CXS didn't fire — fall back for remaining pages
-                _log(f"  WARN — CXS silent on page {page_num}, switching to DOM+JSON-LD")
+                _warn(f"CXS silent on page {page_num}")
                 use_cxs = False
                 dom_pending = next_links
             elif not use_cxs:
@@ -959,7 +970,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
 
         max_results = site.get("max_results")
         if max_results and len(results) > max_results:
-            _log(f"  WARN — {site['name']}: capping results {len(results)} → {max_results} (batch refresh likely)")
+            _warn(f"capping results {len(results)} → {max_results}")
             results = results[:max_results]
 
         return results, skipped_excl, skipped_err, newest_seen
@@ -1071,17 +1082,14 @@ async def _get_icims_job_links(page, site: dict) -> tuple[list[dict], object]:
     site_hostname = urlparse(site["url"]).netloc
     frame = await _icims_content_frame(page, site_hostname)
     if frame is None:
-        _log(
-            f"  {site['name']}: WARN — iCIMS job table not found in any frame"
-            " (selectors: .iCIMS_JobsTable, [class*=iCIMS_Jobs])"
-        )
+        _warn("iCIMS job table not found")
         return [], None
     _log(f"  Frame: {frame.url[:80]}")
     # Job cards render via XHR after the frame's domcontentloaded — wait for links.
     try:
         await frame.wait_for_selector('a[href*="/jobs/"]', timeout=20_000)
     except PlaywrightTimeoutError:
-        _log(f"  {site['name']}: WARN — no job links appeared in frame after 20s")
+        _warn("no job links appeared in frame")
     return await frame.evaluate(_ICIMS_JOB_LINK_JS), frame
 
 
@@ -1107,12 +1115,13 @@ async def _get_icims_next_page(frame) -> list[dict]:
         )
         await frame.wait_for_selector(_ICIMS_TABLE_SEL, timeout=15_000)
     except PlaywrightTimeoutError:
-        _log("  WARN — iCIMS next page did not load new content")
+        _warn("next page did not load")
         return []
     return await frame.evaluate(_ICIMS_JOB_LINK_JS)
 
 
 async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
+    _site_ctx.set(site["name"])
     _log(f"Scraping {site['name']} (iCIMS) ...")
     search_page = await browser.new_page()
     detail_page = await _make_detail_page(browser)
@@ -1233,6 +1242,7 @@ async def _intercept_emory_api(page) -> dict:
 
 
 async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, int, date | None]:
+    _site_ctx.set(site["name"])
     _log(f"Scraping {site['name']} (Jobsyn/DirectEmployers) ...")
     page = await browser.new_page()
     try:
@@ -1337,7 +1347,7 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
             await more_btn.first.click()
             api_data = await intercept_task
             if not api_data:
-                _log(f"  WARN — no API response after More click on page {page_num}")
+                _warn(f"no API response on page {page_num}")
                 break
 
         return results, skipped_excl, skipped_err, newest_seen
@@ -1439,33 +1449,32 @@ _STRIP_CITY_RE = re.compile(r'\s*\([^)]*\)\s*$')
 
 def _classify_issue_line(line: str) -> tuple[str, str | None] | None:
     """Return (category, site) for a WARN/ERROR log line, or None if not an issue line.
-    Site is stripped of city suffix; None when the site name isn't present in the log line.
     Categories: batch refresh | sort | filter | pagination | crash
     """
     if not re.search(r'\b(?:WARN|WARNING|ERROR)\b', line):
         return None
     body = re.sub(r'^\[\d{4}-\d{2}-\d{2} [^\]]+\]\s*', '', line).strip()
 
-    def _site(m: re.Match, grp: int = 1) -> str:
-        return _STRIP_CITY_RE.sub('', m.group(grp).strip())
+    # Crash: different prefix format — handle first
+    error_m = re.match(r'([^:]+):\s*ERROR after \d+s', body)
+    if error_m:
+        return "crash", _STRIP_CITY_RE.sub('', error_m.group(1).strip())
+    if re.search(r'\bERROR\b', body):
+        return "crash", None
 
-    # (category, pattern, site_group_index_or_None)
-    checks: list[tuple[str, re.Pattern, int | None]] = [
-        ("batch refresh", re.compile(r'batch refresh suspected \((.+?)\):'),    1),
-        ("batch refresh", re.compile(r'WARN — ([^:]+): capping results'),       1),
-        ("sort",          re.compile(r'sort collapsed \(([^)]+)\)'),             1),
-        ("sort",          re.compile(r'Sort'),                                   None),
-        ("filter",        re.compile(r'category filter failed'),                 None),
-        ("pagination",    re.compile(r'([^:]+):\s*WARN — (?:iCIMS|no job links|job titles)'), 1),
-        ("pagination",    re.compile(r'next page did not load', re.IGNORECASE),  None),
-        ("pagination",    re.compile(r'Timed out|no API response', re.IGNORECASE), None),
-        ("crash",         re.compile(r'([^:]+):\s*ERROR after \d+s'),            1),
-        ("crash",         re.compile(r'ERROR'),                                  None),
-    ]
-    for category, pattern, site_grp in checks:
-        m = pattern.search(body)
-        if m:
-            site = _site(m, site_grp) if site_grp is not None else None
+    # Extract site from standard warn prefix: "SITE: WARN — ..."
+    prefix_m = re.match(r'([^:]+):\s*(?:WARN|WARNING)\b', body)
+    site = _STRIP_CITY_RE.sub('', prefix_m.group(1).strip()) if prefix_m else None
+    msg = body[prefix_m.end():].strip(" —") if prefix_m else body
+
+    # Classify by message keyword
+    for category, pattern in [
+        ("batch refresh", re.compile(r'batch refresh|capping results')),
+        ("sort",          re.compile(r'sort')),
+        ("filter",        re.compile(r'category filter')),
+        ("pagination",    re.compile(r'next page|timed out|no job links|job titles|no API|iCIMS', re.IGNORECASE)),
+    ]:
+        if pattern.search(msg):
             return category, site
     return None
 
@@ -1636,7 +1645,7 @@ async def _run_site(
             jobs, skipped_excl, skipped_err, newest_seen = await site["scraper"](browser, site, since_date)
             sort_warning = _sort_collapsed(jobs, newest_seen, since_date)
             if sort_warning:
-                _log(f"  WARN — sort collapsed ({site['name']}) — flagging in email")
+                _warn("sort collapsed")
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped_excl} excl, {skipped_err} no-data, {_elapsed}s — {_page_freshness(newest_seen)}")
             return SiteResult(site["name"], jobs, skipped_excl, skipped_err, sort_warning, newest_seen)
