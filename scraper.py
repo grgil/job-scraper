@@ -77,7 +77,7 @@ SITES = [
             "Revenue Management",
             "Administrative and Support Services",
         ],
-        "max_pages": 12,
+        "max_pages": 15,
     },
 ]
 
@@ -94,8 +94,7 @@ WORKDAY_SITES = [
          "&jobFamily=b6f39ab6e17a1010bc655896ac3c0001"
          "&jobFamily=63ee0f7615fd10010766102ddb7a0000"
          "&jobFamily=b6f39ab6e17a1010bc655f3564f60000"
-     ),
-     "max_pages": 6},
+     )},
     {"name": "VUMC",
      "url": (
          "https://vumc.wd1.myworkdayjobs.com/vumccareers"
@@ -222,6 +221,31 @@ TITLE_EXCLUDE_PHRASES = {
     "dietician",                         # alternate spelling of dietitian
     "child life specialist",
     "technologist",
+    # Emory University / School of Medicine non-healthcare noise
+    "faculty position",
+    "academic advisor",
+    "research administrator",
+    "clinical research coordinator",
+    "research scientist",
+    "virtual interview",
+    "lab specialist",
+    "lab tech",
+    "college of arts",
+    "visiting scholar",
+    # Radiology service-line management (not informatics)
+    "radiology manager",
+    "radiology senior",
+    "radiology operations",
+    "ir radiology",
+    "corporate director",
+    # Event postings
+    "on site interview",
+    "interview day",
+    # Access / scheduling front-line roles
+    "patient access rep",
+    "patient access scheduler",
+    # Facilities / safety
+    "public safety",
 }
 TITLE_EXCLUDE_WORDS = {
     "rn", "lpn", "lvn", "cna", "crna", "cns", "emt", "paramedic",
@@ -233,6 +257,8 @@ TITLE_EXCLUDE_WORDS = {
     "lcsw", "lpc",
     "cook",
     "president",   # also matches vice president
+    "hvac",
+    "chef",
 }
 
 # ---------------------------------------------------------------------------
@@ -1585,6 +1611,7 @@ async def main() -> None:
     parser.add_argument("--no-email", action="store_true", help="Skip email; write HTML previews to disk instead")
     parser.add_argument("--no-save",  action="store_true", help="Skip writing seen_jobs.json (safe for local runs)")
     parser.add_argument("--weekly", action="store_true", help="Weekly recap: 7-day lookback, primary-only, updates seen_jobs")
+    parser.add_argument("--sites", metavar="NAME", nargs="+", help="Run only these site names (partial match, case-insensitive)")
     args = parser.parse_args()
 
     weekly = args.weekly
@@ -1631,6 +1658,9 @@ async def main() -> None:
                 # iCIMS/Emory (API intercept, very fast) >
                 # Workday (jobFamily-filtered CXS, quick date-exhaustion stop).
                 ordered = _sites + _icims + _emory + _workday
+                if args.sites:
+                    filters = [f.lower() for f in args.sites]
+                    ordered = [s for s in ordered if any(f in s["name"].lower() for f in filters)]
                 tasks = [_run_site(sem, browser, s, since_date) for s in ordered]
                 results: list[SiteResult] = list(await asyncio.gather(*tasks))
 
