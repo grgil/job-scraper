@@ -1434,49 +1434,77 @@ def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: d
     return newest_seen < since_date - timedelta(days=2)
 
 
-def _extract_warn_label(raw: str) -> str:
-    """Return a short label from the text captured after WARN[ING][ — /: ] in a log line."""
-    colon_idx = raw.find(": ")
-    dash_idx = raw.find(" — ")
-    if colon_idx >= 0 and colon_idx < 60:
-        before = raw[:colon_idx]
-        after = raw[colon_idx + 2:]
-        if len(before) < 25:
-            # Short prefix is an embedded site name — restructure as "message (site)"
-            msg = after.split(": ")[0].split(" — ")[0].strip()[:60]
-            return f"{msg} ({before})"
-        return before[:80]
-    if dash_idx >= 0 and dash_idx < 60:
-        return raw[:dash_idx].strip()[:80]
-    return raw.strip()[:80]
+# Maps log line substrings to clean human-readable labels.
+# Order matters — more specific patterns first.
+_ISSUE_PATTERNS: list[tuple] = [
+    # Batch refresh — scraper stopped early or capped results
+    (re.compile(r'batch refresh suspected \((.+?)\):'),     lambda m: f"batch refresh ({m.group(1)})"),
+    (re.compile(r'WARN — ([^:]+): capping results'),        lambda m: f"batch refresh ({m.group(1).strip()})"),
+    # Sort issues
+    (re.compile(r'sort collapsed \(([^)]+)\)'),             lambda m: f"sort collapsed ({m.group(1)})"),
+    (re.compile(r'Sort re-render did not detect'),          lambda _: "sort may be unsorted"),
+    (re.compile(r'Sort dropdown not found'),                lambda _: "sort + no results"),
+    # Category filter
+    (re.compile(r"category filter failed for '([^']+)'"),   lambda m: f"filter failed: {m.group(1)}"),
+    # Pagination stall (Workday, Phenom, iCIMS share the same label)
+    (re.compile(r'next page did not load', re.IGNORECASE),  lambda _: "pagination stalled"),
+    # iCIMS/Workday site-specific issues (site name precedes ": WARN")
+    (re.compile(r'([^:]+):\s*WARN — iCIMS job table not found'), lambda m: f"iCIMS table missing ({m.group(1).strip()})"),
+    (re.compile(r'([^:]+):\s*WARN — no job links appeared'),     lambda m: f"no jobs in frame ({m.group(1).strip()})"),
+    (re.compile(r'([^:]+):\s*WARN — job titles timed out'),      lambda m: f"title timeout ({m.group(1).strip()})"),
+    # General load issues
+    (re.compile(r'Timed out waiting for job links'),        lambda _: "page load timeout"),
+    (re.compile(r'no API response after More click'),       lambda _: "API no response"),
+    # Data quality
+    (re.compile(r'unrecognized postedOn format'),           lambda _: "date parse error"),
+    (re.compile(r'CXS silent on page'),                     lambda _: "XHR fallback"),
+    # Site and run crashes (ERROR lines — not caught by WARN patterns)
+    (re.compile(r'([^:]+):\s*ERROR after \d+s'),            lambda m: f"site crash ({m.group(1).strip()})"),
+    (re.compile(r'ERROR:'),                                 lambda _: "run crash"),
+]
 
 
-def _last_warn_from_log() -> str:
+def _classify_issue_line(line: str) -> str | None:
+    """Return a clean label for a WARN/WARNING/ERROR log line, or None if it's not an issue line."""
+    if not re.search(r'\b(?:WARN|WARNING|ERROR)\b', line):
+        return None
+    body = re.sub(r'^\[\d{4}-\d{2}-\d{2} [^\]]+\]\s*', '', line)
+    for pattern, labeler in _ISSUE_PATTERNS:
+        m = pattern.search(body)
+        if m:
+            return labeler(m)
+    # Fallback: generic extraction from text after WARN[ING]/ERROR keyword
+    fallback = re.search(r'(?:WARN(?:ING)?|ERROR)\s*[\-—:]+\s*(.{1,80})', body)
+    if fallback:
+        raw = fallback.group(1)
+        return raw.split(': ')[0].split(' — ')[0].strip()[:80]
+    return body.strip()[:80]
+
+
+def _last_issues_from_log() -> str:
     if not LOG_FILE.exists():
-        return "Last warn: log unavailable"
+        return "Last warn/fail: log unavailable"
     date_re = re.compile(r'^\[(\d{4}-\d{2}-\d{2})')
-    warn_re = re.compile(r'WARN(?:ING)?\s*[\-—:]+\s*(.{1,120})')
-    warns_by_date: dict[str, list[str]] = {}
+    issues_by_date: dict[str, list[str]] = {}
     for line in LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
         ts_m = date_re.match(line)
         if not ts_m:
             continue
-        msg_m = warn_re.search(line)
-        if not msg_m:
+        label = _classify_issue_line(line)
+        if not label:
             continue
         d = ts_m.group(1)
-        label = _extract_warn_label(msg_m.group(1))
-        bucket = warns_by_date.setdefault(d, [])
+        bucket = issues_by_date.setdefault(d, [])
         if label not in bucket:
             bucket.append(label)
-    if not warns_by_date:
-        return "Last warn: none in log"
-    last_date_str = max(warns_by_date)
-    labels = warns_by_date[last_date_str]
+    if not issues_by_date:
+        return "Last warn/fail: none in log"
+    last_date_str = max(issues_by_date)
+    labels = issues_by_date[last_date_str]
     date_fmt = date.fromisoformat(last_date_str).strftime("%b %d")
     shown = labels[:3]
     suffix = f" (+{len(labels) - 3} more)" if len(labels) > 3 else ""
-    return f"Last warn: {date_fmt} &middot; {', '.join(shown)}{suffix}"
+    return f"Last warn/fail: {date_fmt} &middot; {', '.join(shown)}{suffix}"
 
 
 def _build_health_section(qualifying_count: int, new_count: int, seen_record: dict, run_date: date) -> str:
@@ -1490,7 +1518,7 @@ def _build_health_section(qualifying_count: int, new_count: int, seen_record: di
         if cutoff_45 <= (v if isinstance(v, str) else v["first_seen"]) < cutoff_38
     )
     cache_line = f"Cache: {total} entries &middot; {expiring} expiring &lt;7d"
-    warn_line = _last_warn_from_log()
+    warn_line = _last_issues_from_log()
     return (
         '<div style="background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;'
         'padding:10px 14px;margin-top:28px;font-size:12px;color:#666;line-height:1.7;">'
