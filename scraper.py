@@ -1377,38 +1377,6 @@ def _priority_score(job: dict, site_name: str) -> str:
     return "primary" if score >= PRIORITY_CONFIG["score_thresholds"]["primary"] else "secondary"
 
 
-def _build_top_matches(richmond: list[tuple[str, dict]], others: list[tuple[str, dict]]) -> str:
-    if not richmond and not others:
-        return ""
-
-    def _item(site_name: str, job: dict) -> str:
-        loc = job.get("location") or "Location not listed"
-        return (
-            f'<li style="margin:4px 0;font-size:13px;">'
-            f'<a href="{job["url"]}" style="color:#1a4a7a;font-weight:bold;">{job["title"]}</a>'
-            f' &mdash; {site_name} &mdash; {loc}'
-            f'</li>'
-        )
-
-    blocks = []
-    if richmond:
-        items = "".join(_item(s, j) for s, j in richmond)
-        blocks.append(
-            f'<div style="background:#f0fdfa;border-left:3px solid #0d9488;padding:10px 14px;margin-bottom:12px;">'
-            f'<p style="color:#134e4a;font-weight:bold;margin:0 0 8px 0;font-size:14px;">★ Top Matches &mdash; Richmond ({len(richmond)})</p>'
-            f'<ul style="margin:0;padding-left:18px;line-height:1.7;">{items}</ul>'
-            f'</div>'
-        )
-    if others:
-        items = "".join(_item(s, j) for s, j in others)
-        blocks.append(
-            f'<div style="background:#fffbeb;border-left:3px solid #d97706;padding:10px 14px;margin-bottom:12px;">'
-            f'<p style="color:#92400e;font-weight:bold;margin:0 0 8px 0;font-size:14px;">★ Top Matches ({len(others)})</p>'
-            f'<ul style="margin:0;padding-left:18px;line-height:1.7;">{items}</ul>'
-            f'</div>'
-        )
-    return "".join(blocks)
-
 
 def _is_excluded_title(title: str, extra_words: frozenset[str] = frozenset()) -> bool:
     t = title.lower()
@@ -1464,6 +1432,74 @@ def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: d
     if results or newest_seen is None:
         return False
     return newest_seen < since_date - timedelta(days=2)
+
+
+def _extract_warn_label(raw: str) -> str:
+    """Return a short label from the text captured after WARN[ING][ — /: ] in a log line."""
+    colon_idx = raw.find(": ")
+    dash_idx = raw.find(" — ")
+    if colon_idx >= 0 and colon_idx < 60:
+        before = raw[:colon_idx]
+        after = raw[colon_idx + 2:]
+        if len(before) < 25:
+            # Short prefix is an embedded site name — restructure as "message (site)"
+            msg = after.split(": ")[0].split(" — ")[0].strip()[:60]
+            return f"{msg} ({before})"
+        return before[:80]
+    if dash_idx >= 0 and dash_idx < 60:
+        return raw[:dash_idx].strip()[:80]
+    return raw.strip()[:80]
+
+
+def _last_warn_from_log() -> str:
+    if not LOG_FILE.exists():
+        return "Last warn: log unavailable"
+    date_re = re.compile(r'^\[(\d{4}-\d{2}-\d{2})')
+    warn_re = re.compile(r'WARN(?:ING)?\s*[\-—:]+\s*(.{1,120})')
+    warns_by_date: dict[str, list[str]] = {}
+    for line in LOG_FILE.read_text(encoding="utf-8", errors="replace").splitlines():
+        ts_m = date_re.match(line)
+        if not ts_m:
+            continue
+        msg_m = warn_re.search(line)
+        if not msg_m:
+            continue
+        d = ts_m.group(1)
+        label = _extract_warn_label(msg_m.group(1))
+        bucket = warns_by_date.setdefault(d, [])
+        if label not in bucket:
+            bucket.append(label)
+    if not warns_by_date:
+        return "Last warn: none in log"
+    last_date_str = max(warns_by_date)
+    labels = warns_by_date[last_date_str]
+    date_fmt = date.fromisoformat(last_date_str).strftime("%b %d")
+    shown = labels[:3]
+    suffix = f" (+{len(labels) - 3} more)" if len(labels) > 3 else ""
+    return f"Last warn: {date_fmt} &middot; {', '.join(shown)}{suffix}"
+
+
+def _build_health_section(qualifying_count: int, new_count: int, seen_record: dict, run_date: date) -> str:
+    suppressed = qualifying_count - new_count
+    dedup_line = f"{new_count} new &middot; {suppressed} suppressed"
+    cutoff_45 = (run_date - timedelta(days=45)).isoformat()
+    cutoff_38 = (run_date - timedelta(days=38)).isoformat()
+    total = len(seen_record)
+    expiring = sum(
+        1 for v in seen_record.values()
+        if cutoff_45 <= (v if isinstance(v, str) else v["first_seen"]) < cutoff_38
+    )
+    cache_line = f"Cache: {total} entries &middot; {expiring} expiring &lt;7d"
+    warn_line = _last_warn_from_log()
+    return (
+        '<div style="background:#f5f5f5;border:1px solid #e0e0e0;border-radius:4px;'
+        'padding:10px 14px;margin-top:28px;font-size:12px;color:#666;line-height:1.7;">'
+        '<p style="font-weight:600;color:#444;margin:0 0 4px 0;">Scraper Health</p>'
+        f'<p style="margin:0;">{dedup_line}</p>'
+        f'<p style="margin:0;">{cache_line}</p>'
+        f'<p style="margin:0;">{warn_line}</p>'
+        '</div>'
+    )
 
 
 def _build_site_section(site_name: str, jobs: list[dict], skipped_excl: int, skipped_err: int, sort_warning: bool = False, newest_seen: date | None = None, extra_words: frozenset[str] = frozenset()) -> str:
@@ -1525,22 +1561,9 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped_excl: int, ski
     )
 
 
-def build_html_email(results: list[SiteResult], today: date, extra_words: frozenset[str] = frozenset()) -> str:
+def build_html_email(results: list[SiteResult], today: date, extra_words: frozenset[str] = frozenset(), health_html: str = "") -> str:
     total = sum(1 for r in results for j in r.jobs if not _is_excluded_title(j["title"], extra_words))
     date_str = today.strftime('%b %d, %Y')
-
-    richmond_primaries: list[tuple[str, dict]] = []
-    other_primaries: list[tuple[str, dict]] = []
-    for r in results:
-        for job in r.jobs:
-            if _is_excluded_title(job["title"], extra_words):
-                continue
-            if _priority_score(job, r.name) == "primary":
-                if r.name in PRIORITY_CONFIG["richmond_orgs"]:
-                    richmond_primaries.append((r.name, job))
-                else:
-                    other_primaries.append((r.name, job))
-    top_matches_html = _build_top_matches(richmond_primaries, other_primaries)
 
     sections = '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">'.join(
         _build_site_section(r.name, r.jobs, r.skipped_excl, r.skipped_err, r.sort_warning, r.newest_seen, extra_words)
@@ -1552,19 +1575,19 @@ def build_html_email(results: list[SiteResult], today: date, extra_words: frozen
 <body style="font-family:Arial,sans-serif;max-width:680px;margin:auto;padding:24px;color:#222;">
   <h2 style="color:#1a4a7a;margin-bottom:4px;">Health Job Alert</h2>
   <p style="color:#888;font-size:13px;margin-top:0;">{date_str} · {total} new posting{"s" if total != 1 else ""}</p>
-  {top_matches_html}
   {sections}
+  {health_html}
   <hr style="border:none;border-top:1px solid #eee;margin-top:32px;">
   <p style="color:#bbb;font-size:12px;">Scraped automatically</p>
 </body>
 </html>"""
 
 
-def send_email(results: list[SiteResult], today: date, label: str = "", extra_words: frozenset[str] = frozenset()) -> None:
+def send_email(results: list[SiteResult], today: date, label: str = "", extra_words: frozenset[str] = frozenset(), health_html: str = "") -> None:
     total = sum(1 for r in results for j in r.jobs if not _is_excluded_title(j["title"], extra_words))
     tag = f" [{label}]" if label else ""
     subject = f"[Job Alert{tag}] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
-    html = build_html_email(results, today, extra_words)
+    html = build_html_email(results, today, extra_words, health_html)
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
@@ -1595,7 +1618,7 @@ async def _run_site(
             jobs, skipped_excl, skipped_err, newest_seen = await site["scraper"](browser, site, since_date)
             sort_warning = _sort_collapsed(jobs, newest_seen, since_date)
             if sort_warning:
-                _log(f"  {site['name']}: sort collapsed — flagging in email")
+                _log(f"  WARN — sort collapsed ({site['name']}) — flagging in email")
             _elapsed = int(time.perf_counter() - _t0)
             _log(f"{site['name']}: {len(jobs)} qualifying job(s), {skipped_excl} excl, {skipped_err} no-data, {_elapsed}s — {_page_freshness(newest_seen)}")
             return SiteResult(site["name"], jobs, skipped_excl, skipped_err, sort_warning, newest_seen)
@@ -1733,16 +1756,17 @@ async def main() -> None:
                     main_results = _dedup(list(results), seen_urls, seen_record, today_str)
                     new_count = sum(len(r.jobs) for r in main_results)
                     _log(f"Dedup: {qualifying_count - new_count}/{qualifying_count} suppressed ({new_count} new)")
+                    health_html = _build_health_section(qualifying_count, new_count, seen_record, TODAY)
 
                     if no_email:
                         if _has_content(main_results):
-                            html = build_html_email(main_results, since_date)
+                            html = build_html_email(main_results, since_date, health_html=health_html)
                             out = BASE_DIR / "preview_main.html"
                             out.write_text(html, encoding="utf-8")
                             _log(f"  --no-email: wrote {out.name}")
                     else:
                         if _has_content(main_results):
-                            send_email(main_results, TODAY)
+                            send_email(main_results, TODAY, health_html=health_html)
 
             finally:
                 if not no_save:
