@@ -1438,20 +1438,20 @@ def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: d
 # Order matters — more specific patterns first.
 _ISSUE_PATTERNS: list[tuple] = [
     # Batch refresh — scraper stopped early or capped results
-    (re.compile(r'batch refresh suspected \((.+?)\):'),     lambda m: f"batch refresh ({m.group(1)})"),
-    (re.compile(r'WARN — ([^:]+): capping results'),        lambda m: f"batch refresh ({m.group(1).strip()})"),
+    (re.compile(r'batch refresh suspected'),                lambda _: "batch refresh"),
+    (re.compile(r'capping results.+batch refresh likely'),  lambda _: "batch refresh"),
     # Sort issues
-    (re.compile(r'sort collapsed \(([^)]+)\)'),             lambda m: f"sort collapsed ({m.group(1)})"),
+    (re.compile(r'sort collapsed'),                         lambda _: "sort collapsed"),
     (re.compile(r'Sort re-render did not detect'),          lambda _: "sort may be unsorted"),
     (re.compile(r'Sort dropdown not found'),                lambda _: "sort + no results"),
-    # Category filter
+    # Category filter (keep category name — it's what failed, not an org)
     (re.compile(r"category filter failed for '([^']+)'"),   lambda m: f"filter failed: {m.group(1)}"),
-    # Pagination stall (Workday, Phenom, iCIMS share the same label)
+    # Pagination stall (Workday, Phenom, iCIMS all use the same label)
     (re.compile(r'next page did not load', re.IGNORECASE),  lambda _: "pagination stalled"),
-    # iCIMS/Workday site-specific issues (site name precedes ": WARN")
-    (re.compile(r'([^:]+):\s*WARN — iCIMS job table not found'), lambda m: f"iCIMS table missing ({m.group(1).strip()})"),
-    (re.compile(r'([^:]+):\s*WARN — no job links appeared'),     lambda m: f"no jobs in frame ({m.group(1).strip()})"),
-    (re.compile(r'([^:]+):\s*WARN — job titles timed out'),      lambda m: f"title timeout ({m.group(1).strip()})"),
+    # iCIMS / frame load failures
+    (re.compile(r'iCIMS job table not found'),              lambda _: "iCIMS table missing"),
+    (re.compile(r'no job links appeared in frame'),         lambda _: "no jobs in frame"),
+    (re.compile(r'job titles timed out'),                   lambda _: "title timeout"),
     # General load issues
     (re.compile(r'Timed out waiting for job links'),        lambda _: "page load timeout"),
     (re.compile(r'no API response after More click'),       lambda _: "API no response"),
@@ -1459,7 +1459,7 @@ _ISSUE_PATTERNS: list[tuple] = [
     (re.compile(r'unrecognized postedOn format'),           lambda _: "date parse error"),
     (re.compile(r'CXS silent on page'),                     lambda _: "XHR fallback"),
     # Site and run crashes (ERROR lines — not caught by WARN patterns)
-    (re.compile(r'([^:]+):\s*ERROR after \d+s'),            lambda m: f"site crash ({m.group(1).strip()})"),
+    (re.compile(r'ERROR after \d+s'),                       lambda _: "site crash"),
     (re.compile(r'ERROR:'),                                 lambda _: "run crash"),
 ]
 
