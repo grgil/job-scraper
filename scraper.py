@@ -625,7 +625,7 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
                 )
                 _log("  Result list refreshed after sort change")
             except PlaywrightTimeoutError:
-                _warn("sort re-render no change")
+                _log("  Sort re-render no change — dropdown cosmetic on this deployment")
         elif current_sort == '':
             _log("  Sort dropdown empty — sort likely URL-controlled, skipping")
 
@@ -716,7 +716,7 @@ async def _get_next_page_links(search_page) -> list[dict]:
     return await search_page.evaluate(_PHENOM_JOB_LINKS_JS)
 
 
-async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
+async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, int, date | None, int]:
     _site_ctx.set(site["name"])
     _log(f"Scraping {site['name']} (Phenom People) ...")
     search_page = await browser.new_page()
@@ -833,7 +833,7 @@ _WORKDAY_DOM_LINKS_JS = """() => {
 }"""
 
 
-async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
+async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, int, date | None, int]:
     _site_ctx.set(site["name"])
     _log(f"Scraping {site['name']} (Workday) ...")
     search_page = await browser.new_page()
@@ -1169,7 +1169,7 @@ async def _get_icims_next_page(frame) -> list[dict]:
     return await frame.evaluate(_ICIMS_JOB_LINK_JS)
 
 
-async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, date | None]:
+async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, int, date | None, int]:
     _site_ctx.set(site["name"])
     _log(f"Scraping {site['name']} (iCIMS) ...")
     search_page = await browser.new_page()
@@ -1292,7 +1292,7 @@ async def _intercept_emory_api(page) -> dict:
         page.remove_listener("response", on_response)
 
 
-async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, int, date | None]:
+async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, int, date | None, int]:
     _site_ctx.set(site["name"])
     _log(f"Scraping {site['name']} (Jobsyn/DirectEmployers) ...")
     page = await browser.new_page()
@@ -1529,9 +1529,9 @@ def _classify_issue_line(line: str) -> tuple[str, str | None] | None:
     # Classify by message keyword
     for category, pattern in [
         ("batch refresh", re.compile(r'batch refresh|capping results')),
-        ("sort",          re.compile(r'sort')),
+        ("sort",          re.compile(r'sort collapsed')),
         ("filter",        re.compile(r'category filter')),
-        ("pagination",    re.compile(r'next page|timed out|no job links|job titles|no API|iCIMS', re.IGNORECASE)),
+        ("pagination",    re.compile(r'next page|timed out|no job links|job titles|no API|iCIMS|sort dropdown', re.IGNORECASE)),
     ]:
         if pattern.search(msg):
             return category, site
