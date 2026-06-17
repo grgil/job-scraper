@@ -729,8 +729,10 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
         skipped_err = 0
         consecutive_empty = 0
         newest_seen: date | None = None
+        pages_seen = 0
 
         while links:
+            pages_seen += 1
             page_matches = 0
             for i, job in enumerate(links, 1):
                 details = await _get_job_details(detail_page, job["url"])
@@ -769,7 +771,7 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
         else:
             _log("  No more pages")
 
-        return results, skipped_excl, skipped_err, newest_seen
+        return results, skipped_excl, skipped_err, newest_seen, pages_seen
     finally:
         await search_page.close()
         await detail_page.close()
@@ -883,6 +885,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
         consecutive_empty = 0
         newest_seen: date | None = None
         page_num = 1
+        pages_seen = 0
         # DOM fallback only: page 1 is already loaded, subsequent pages come from _get_workday_next_page
         dom_pending: list[dict] | None = None
 
@@ -902,6 +905,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                 _log("  No more pages")
                 break
 
+            pages_seen += 1
             page_matches = 0
             page_dates: list[date] = []
 
@@ -1018,7 +1022,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
             _warn(f"capping results {len(results)} → {max_results}")
             results = results[:max_results]
 
-        return results, skipped_excl, skipped_err, newest_seen
+        return results, skipped_excl, skipped_err, newest_seen, pages_seen
     finally:
         await search_page.close()
         await detail_page.close()
@@ -1178,6 +1182,7 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
         all_results: list[dict] = []
         total_skipped_excl = 0
         total_skipped_err = 0
+        total_pages_seen = 0
         newest_seen: date | None = None
 
         for cat_url in category_urls:
@@ -1190,6 +1195,7 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
             has_card_dates = links and links[0].get("dateStr") is not None
 
             while links:
+                total_pages_seen += 1
                 page_matches = 0
                 for i, job in enumerate(links, 1):
                     if _is_excluded_title(job["title"]):
@@ -1255,7 +1261,7 @@ async def scrape_icims_site(browser, site: dict, since_date: date) -> tuple[list
             else:
                 _log("  No more pages")
 
-        return all_results, total_skipped_excl, total_skipped_err, newest_seen
+        return all_results, total_skipped_excl, total_skipped_err, newest_seen, total_pages_seen
     finally:
         await search_page.close()
         await detail_page.close()
@@ -1299,6 +1305,7 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
         consecutive_old = 0
         newest_seen: date | None = None
         page_num = 1
+        pages_seen = 0
 
         # Page 1: capture the SPA's initial API call during page load
         _log(f"  Loading {site['page_url']}")
@@ -1315,6 +1322,7 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
             if not jobs_raw:
                 break
 
+            pages_seen += 1
             page_had_fresh = False
             for job in jobs_raw:
                 raw_title = (job.get("title_exact") or "").strip()
@@ -1395,7 +1403,7 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
                 _warn(f"no API response on page {page_num}")
                 break
 
-        return results, skipped_excl, skipped_err, newest_seen
+        return results, skipped_excl, skipped_err, newest_seen, pages_seen
     finally:
         await page.close()
 
@@ -1485,11 +1493,13 @@ def _dedup(results: list["SiteResult"], seen_urls: set[str], seen_record: dict, 
 # Email builders
 # ---------------------------------------------------------------------------
 
-def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: date) -> bool:
+def _sort_collapsed(results: list[dict], newest_seen: date | None, since_date: date, pages_seen: int = 99) -> bool:
     """True when scraper hit its threshold with 0 matches and newest date seen is
     suspiciously stale — strong signal that the server returned a broken sort order."""
     if results or newest_seen is None:
         return False
+    if pages_seen < 2:
+        return False  # One page + pagination failure, not a sort issue
     return newest_seen < since_date - timedelta(days=2)
 
 
@@ -1691,8 +1701,8 @@ async def _run_site(
     async with sem:
         _t0 = time.perf_counter()
         try:
-            jobs, skipped_excl, skipped_err, newest_seen = await site["scraper"](browser, site, since_date)
-            sort_warning = _sort_collapsed(jobs, newest_seen, since_date)
+            jobs, skipped_excl, skipped_err, newest_seen, pages_seen = await site["scraper"](browser, site, since_date)
+            sort_warning = _sort_collapsed(jobs, newest_seen, since_date, pages_seen)
             if sort_warning:
                 _warn("sort collapsed")
             _elapsed = int(time.perf_counter() - _t0)

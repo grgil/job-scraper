@@ -690,6 +690,675 @@ async def probe_emory_categories() -> None:
         await browser.close()
 
 
+_PHENOM_SORT_SITES = [
+    ("UVA Health",  "https://careers.uvahealth.org/us/en/search-results?sortBy=postingdate&descending=true"),
+    ("VCU Health",  "https://careers.vcuhealth.org/us/en/search-results?sortBy=postingdate&descending=true"),
+    ("Duke Health", "https://careers.dukehealth.org/us/en/search-results?sortBy=postingdate&descending=true"),
+]
+
+_JOB_LINKS_JS = """() => {
+    const seen = new Set();
+    const out = [];
+    document.querySelectorAll('a[href*="/job/"]').forEach(a => {
+        if (seen.has(a.href)) return;
+        seen.add(a.href);
+        const title = (a.innerText || a.textContent || '').trim();
+        if (title.length > 8) out.push({ title: title.slice(0, 55), url: a.href });
+    });
+    return out.slice(0, 5);
+}"""
+
+_JSON_LD_DATE_JS = """() => {
+    for (const s of document.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+            const d = JSON.parse(s.textContent);
+            if (d['@type'] === 'JobPosting') return d.datePosted || null;
+        } catch {}
+    }
+    return null;
+}"""
+
+
+async def probe_phenom_sort() -> None:
+    """Verify that sortBy=postingdate in the URL produces date-fresh results
+    equivalent to the dropdown 'Most recent' selection, for UVA / VCU / Duke.
+
+    For each site:
+      1. Load with sortBy=postingdate URL → record dropdown value + first-5 jobs
+      2. If dropdown shows 'Most relevant', trigger native change to 'Most recent'
+         → record first-5 jobs after re-render (or timeout)
+      3. Fetch datePosted from JSON-LD on the first job's detail page for each ordering
+      4. Report: dropdown value, whether lists match, datePosted for ordering A vs B
+
+    Run with: python inspect_selectors.py phenom-sort
+    """
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+
+        for name, url in _PHENOM_SORT_SITES:
+            print(f"\n{'='*65}\n  {name}\n  URL: {url}\n{'='*65}")
+            page = await browser.new_page()
+            detail_page = await browser.new_page()
+
+            try:
+                # ── Step 1: Load with URL sort param ─────────────────────────
+                print(f"\n  [A] Loading with URL sortBy=postingdate ...")
+                await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+
+                # Wait for sort dropdown or jobs
+                dropdown_val = None
+                try:
+                    await page.wait_for_selector('#sortselect', timeout=30_000)
+                    dropdown_val = await page.eval_on_selector('#sortselect', 'el => el.value')
+                    print(f"  Dropdown value on load: '{dropdown_val}'")
+                except Exception:
+                    print(f"  Dropdown #sortselect not found within 30s")
+
+                # Wait for job links
+                try:
+                    await page.wait_for_function(
+                        """() => document.querySelectorAll('a[href*="/job/"]').length >= 3""",
+                        timeout=20_000,
+                    )
+                except Exception:
+                    print(f"  WARNING: fewer than 3 job links appeared")
+
+                links_url_sort = await page.evaluate(_JOB_LINKS_JS)
+                print(f"\n  [A] First {len(links_url_sort)} jobs (URL sort):")
+                for i, j in enumerate(links_url_sort, 1):
+                    print(f"    {i}. {j['title']}")
+
+                # Fetch datePosted for job #1 via JSON-LD
+                date_a = None
+                if links_url_sort:
+                    try:
+                        await detail_page.goto(links_url_sort[0]["url"], wait_until="domcontentloaded", timeout=30_000)
+                        await detail_page.wait_for_timeout(2_000)
+                        date_a = await detail_page.evaluate(_JSON_LD_DATE_JS)
+                    except Exception as e:
+                        print(f"  Detail fetch error (A): {e}")
+                print(f"  [A] Job #1 datePosted: {date_a or 'not found'}")
+
+                # ── Step 2: Dropdown manipulation ─────────────────────────────
+                if dropdown_val == 'Most relevant':
+                    print(f"\n  [B] Dropdown shows 'Most relevant' — triggering change to 'Most recent' ...")
+                    first_href_before = await page.evaluate(
+                        "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
+                    )
+                    await page.select_option('#sortselect', 'Most recent')
+                    await page.evaluate("""() => {
+                        const sel = document.querySelector('#sortselect');
+                        const setter = Object.getOwnPropertyDescriptor(
+                            window.HTMLSelectElement.prototype, 'value'
+                        ).set;
+                        setter.call(sel, 'Most recent');
+                        ['input', 'change'].forEach(t =>
+                            sel.dispatchEvent(new Event(t, { bubbles: true, cancelable: true }))
+                        );
+                    }""")
+                    rerender_fired = False
+                    try:
+                        await page.wait_for_function(
+                            f"""() => {{
+                                const a = document.querySelector('a[href*="/job/"]');
+                                return a && a.href !== {repr(first_href_before)};
+                            }}""",
+                            timeout=15_000,
+                        )
+                        rerender_fired = True
+                        print(f"  Re-render fired — first href changed")
+                    except Exception:
+                        print(f"  Re-render timed out (15s) — first href did NOT change")
+
+                    links_dropdown_sort = await page.evaluate(_JOB_LINKS_JS)
+                    print(f"\n  [B] First {len(links_dropdown_sort)} jobs (dropdown sort):")
+                    for i, j in enumerate(links_dropdown_sort, 1):
+                        print(f"    {i}. {j['title']}")
+
+                    # Fetch datePosted for job #1 after dropdown change
+                    date_b = None
+                    if links_dropdown_sort:
+                        try:
+                            await detail_page.goto(links_dropdown_sort[0]["url"], wait_until="domcontentloaded", timeout=30_000)
+                            await detail_page.wait_for_timeout(2_000)
+                            date_b = await detail_page.evaluate(_JSON_LD_DATE_JS)
+                        except Exception as e:
+                            print(f"  Detail fetch error (B): {e}")
+                    print(f"  [B] Job #1 datePosted: {date_b or 'not found'}")
+
+                    # ── Compare ────────────────────────────────────────────────
+                    urls_a = [j["url"] for j in links_url_sort]
+                    urls_b = [j["url"] for j in links_dropdown_sort]
+                    lists_match = urls_a == urls_b
+                    print(f"\n  {'─'*55}")
+                    print(f"  Re-render fired:        {rerender_fired}")
+                    print(f"  Job lists identical:    {lists_match}")
+                    print(f"  datePosted A (URL):     {date_a or '—'}")
+                    print(f"  datePosted B (dropdown):{date_b or '—'}")
+                    if lists_match:
+                        print(f"  VERDICT: URL sort == dropdown sort — skipping dropdown is SAFE")
+                    elif not rerender_fired:
+                        print(f"  VERDICT: re-render timed out; lists appear same (URL sort controls order)")
+                    else:
+                        print(f"  VERDICT: *** LISTS DIFFER — URL sort produces different order than dropdown ***")
+                elif dropdown_val == '':
+                    print(f"\n  Dropdown is empty — URL sort is already the active sort control.")
+                    print(f"  [A] datePosted: {date_a or '—'}")
+                    print(f"  VERDICT: URL sort active, no dropdown manipulation needed")
+                else:
+                    print(f"\n  Dropdown value '{dropdown_val}' — no 'Most relevant' path triggered.")
+                    print(f"  [A] datePosted: {date_a or '—'}")
+
+            except Exception as e:
+                print(f"  ERROR: {e}")
+            finally:
+                await page.close()
+                await detail_page.close()
+
+        await browser.close()
+
+
+_FILTER_HEALTH_SITES = [
+    (
+        "VCU Health",
+        "https://careers.vcuhealth.org/us/en/search-results?sortBy=postingdate&descending=true",
+        ["Revenue Cycle", "Information Technology", "Administrative Support", "Finance", "Professional"],
+    ),
+    (
+        "Duke Health",
+        "https://careers.dukehealth.org/us/en/search-results?sortBy=postingdate&descending=true",
+        ["Corporate", "Information Technology", "Revenue Management", "Administrative and Support Services"],
+    ),
+]
+
+
+async def probe_phenom_filter_health() -> None:
+    """Replicate scraper's exact filter-click sequence for VCU and Duke.
+
+    Reports per site:
+      - Sort dropdown value before and after filter clicks
+      - Which categories were found / clicked / failed
+      - Job count and result count text after filters settle
+      - All visible facet names (so we can spot renames or missing items)
+      - datePosted from JSON-LD for the first 3 jobs post-filter
+      - Page count: paginate until no-more-pages or 8 pages, tracking dates per page
+
+    Run with: python inspect_selectors.py phenom-filter-health
+    """
+    import re as _re
+
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        detail_page = await browser.new_page()
+
+        for name, url, categories in _FILTER_HEALTH_SITES:
+            print(f"\n{'='*65}\n  {name}\n  URL: {url}\n  Categories: {categories}\n{'='*65}")
+            page = await browser.new_page()
+
+            try:
+                # ── Load ──────────────────────────────────────────────────────
+                print(f"\n  Loading ...")
+                await page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+
+                # Sort dropdown before filter clicks
+                sort_before = None
+                try:
+                    await page.wait_for_selector('#sortselect', timeout=30_000)
+                    sort_before = await page.eval_on_selector('#sortselect', 'el => el.value')
+                    print(f"  Sort dropdown (before filter): '{sort_before}'")
+                except Exception:
+                    print(f"  Sort dropdown: #sortselect not found within 30s")
+
+                # ── All facet items visible on page ───────────────────────────
+                await page.wait_for_timeout(1_500)
+                all_facets = await page.evaluate("""() =>
+                    [...document.querySelectorAll('[data-ph-at-id="facet-results-item"]')]
+                    .map(el => (el.innerText || el.textContent || '').trim()
+                               .replace(/\\s+/g, ' ')
+                               .replace(/\\(\\d+\\+?\\)\\s*jobs?/gi, '')
+                               .trim())
+                    .filter(t => t.length > 0)
+                """)
+                print(f"\n  All visible facet items ({len(all_facets)}):")
+                for f in all_facets:
+                    print(f"    '{f}'")
+
+                # ── Panel open logic (mirrors scraper exactly) ─────────────────
+                first_item = page.locator('[data-ph-at-id="facet-results-item"]').first
+                try:
+                    panel_visible = await first_item.is_visible(timeout=2_000)
+                except Exception:
+                    panel_visible = False
+                if not panel_visible:
+                    print(f"\n  Panel not visible — trying openers ...")
+                    for open_sel in [
+                        '[data-ph-at-id="facets-and-filters-button"]',
+                        '[data-ph-at-id="facet-heading-link"]',
+                        'button:has-text("Filter")',
+                        'a:has-text("Refine")',
+                    ]:
+                        try:
+                            opener = page.locator(open_sel).first
+                            if await opener.count() and await opener.is_visible(timeout=1_000):
+                                await opener.click(timeout=3_000)
+                                await page.wait_for_timeout(1_000)
+                                print(f"  Opened panel via: {open_sel}")
+                                break
+                        except Exception:
+                            pass
+                else:
+                    print(f"\n  Panel visible — no opener needed")
+
+                # ── Filter clicks (mirrors scraper exactly) ────────────────────
+                print(f"\n  Filter clicks:")
+                clicked = 0
+                for cat in categories:
+                    loc = page.locator('[data-ph-at-id="facet-results-item"]').filter(has_text=cat).first
+                    visible = await loc.is_visible()
+                    if not visible:
+                        print(f"    [{cat}]  NOT VISIBLE — skip (matches scraper log behavior)")
+                        continue
+                    try:
+                        await loc.scroll_into_view_if_needed(timeout=3_000)
+                        await loc.click(timeout=5_000)
+                        await page.wait_for_timeout(300)
+                        print(f"    [{cat}]  clicked OK")
+                        clicked += 1
+                    except Exception as e:
+                        short = str(e)[:80]
+                        print(f"    [{cat}]  FAILED — {short}")
+
+                if clicked:
+                    await page.wait_for_timeout(2_500)
+                print(f"\n  {clicked}/{len(categories)} categories clicked")
+
+                # Sort dropdown after filter clicks
+                try:
+                    sort_after = await page.eval_on_selector('#sortselect', 'el => el.value')
+                    changed = sort_after != sort_before
+                    print(f"  Sort dropdown (after  filter): '{sort_after}'"
+                          + ("  *** CHANGED ***" if changed else "  (unchanged)"))
+                except Exception:
+                    print(f"  Sort dropdown: not found after filter")
+
+                # ── Result count text ──────────────────────────────────────────
+                result_text = await page.evaluate("""() => {
+                    for (const sel of [
+                        '[data-ph-at-id="search-results-count"]',
+                        '[class*="result-count"]',
+                        '[class*="resultCount"]',
+                        '[class*="jobs-count"]',
+                    ]) {
+                        const el = document.querySelector(sel);
+                        if (el) return (el.innerText || el.textContent || '').trim();
+                    }
+                    return null;
+                }""")
+                if result_text:
+                    print(f"  Result count text: '{result_text}'")
+
+                # ── Wait for jobs ──────────────────────────────────────────────
+                try:
+                    await page.wait_for_function(
+                        """() => Array.from(document.querySelectorAll('a[href*="/job/"]'))
+                            .filter(a => (a.innerText||a.textContent||'').trim().length > 8)
+                            .length >= 1""",
+                        timeout=20_000,
+                    )
+                except Exception:
+                    print(f"\n  WARNING: no job links appeared after filter — possible 0-result filter")
+
+                # ── Dates: first 3 jobs on page 1 ─────────────────────────────
+                p1_links = await page.evaluate(_JOB_LINKS_JS)
+                print(f"\n  Page 1 jobs ({len(p1_links)} shown):")
+                p1_dates = []
+                for j in p1_links[:3]:
+                    try:
+                        await detail_page.goto(j["url"], wait_until="domcontentloaded", timeout=25_000)
+                        await detail_page.wait_for_timeout(1_500)
+                        dp = await detail_page.evaluate(_JSON_LD_DATE_JS)
+                    except Exception:
+                        dp = "fetch-err"
+                    p1_dates.append(dp)
+                    print(f"    {dp or '—'}  {j['title']}")
+
+                # ── Paginate: up to 8 pages, record first-job date per page ───
+                print(f"\n  Paginating (up to 8 pages):")
+                for pg in range(2, 9):
+                    next_btn = page.locator('[data-ph-at-id="pagination-next-link"]').last
+                    if not await next_btn.is_visible():
+                        print(f"    page {pg}: no next button — stop")
+                        break
+                    first_href = await page.evaluate(
+                        "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
+                    )
+                    await next_btn.click()
+                    try:
+                        await page.wait_for_function(
+                            f"""() => {{
+                                const a = document.querySelector('a[href*="/job/"]');
+                                return a && a.href !== {repr(first_href)};
+                            }}""",
+                            timeout=30_000,
+                        )
+                    except Exception:
+                        print(f"    page {pg}: next-page load timed out — stop")
+                        break
+
+                    pg_links = await page.evaluate(_JOB_LINKS_JS)
+                    # Fetch date for just the first job on this page
+                    first_date = None
+                    if pg_links:
+                        try:
+                            await detail_page.goto(pg_links[0]["url"], wait_until="domcontentloaded", timeout=25_000)
+                            await detail_page.wait_for_timeout(1_000)
+                            first_date = await detail_page.evaluate(_JSON_LD_DATE_JS)
+                        except Exception:
+                            first_date = "fetch-err"
+                    print(f"    page {pg}: {len(pg_links)} jobs, first datePosted={first_date or '—'}")
+
+            except Exception as e:
+                print(f"\n  TOP-LEVEL ERROR: {e}")
+            finally:
+                await page.close()
+
+        await detail_page.close()
+        await browser.close()
+
+
+_DUKE_URL = "https://careers.dukehealth.org/us/en/search-results?sortBy=postingdate&descending=true"
+_DUKE_CATEGORIES = ["Corporate", "Information Technology", "Revenue Management", "Administrative and Support Services"]
+
+
+async def probe_duke_sort_fix() -> None:
+    """Iterative Duke sort investigation.
+
+    Step 1 — Dropdown options: what values does #sortselect expose?
+    Step 2 — Pre-filter sort: what does page 1 look like unfiltered?
+    Step 3 — Post-filter, pre-sort: apply categories, read page-1 dates and dropdown value.
+    Step 4 — Force 'Most recent' after filter: native-setter dispatch, check re-render.
+    Step 5 — Post-sort page-1 dates: are they fresh now?
+    Step 6 — Pagination check: does page 2 load cleanly after the sort change?
+
+    Run with: python inspect_selectors.py duke-sort-fix
+    """
+    async with async_playwright() as pw:
+        browser = await pw.chromium.launch(headless=True)
+        page = await browser.new_page()
+        detail = await browser.new_page()
+
+        async def _first3_dates(pg):
+            links = await pg.evaluate(_JOB_LINKS_JS)
+            out = []
+            for j in links[:3]:
+                try:
+                    await detail.goto(j["url"], wait_until="domcontentloaded", timeout=25_000)
+                    await detail.wait_for_timeout(1_200)
+                    dp = await detail.evaluate(_JSON_LD_DATE_JS)
+                except Exception:
+                    dp = "fetch-err"
+                out.append((dp, j["title"]))
+            return out
+
+        try:
+            # ── Step 1: inspect dropdown options ─────────────────────────────
+            print(f"\n{'='*65}\n  STEP 1 — Duke dropdown options\n{'='*65}")
+            await page.goto(_DUKE_URL, wait_until="domcontentloaded", timeout=60_000)
+            try:
+                await page.wait_for_selector('#sortselect', timeout=30_000)
+                opts = await page.evaluate("""() => {
+                    const sel = document.querySelector('#sortselect');
+                    return sel ? Array.from(sel.options).map(o => ({val: o.value, text: o.text})) : [];
+                }""")
+                val = await page.eval_on_selector('#sortselect', 'el => el.value')
+                print(f"  Current value: '{val}'")
+                print(f"  Options ({len(opts)}):")
+                for o in opts:
+                    print(f"    value={repr(o['val'])}  text={repr(o['text'])}")
+            except Exception as e:
+                print(f"  #sortselect error: {e}")
+
+            # ── Step 2: page-1 dates BEFORE filter ────────────────────────────
+            print(f"\n{'='*65}\n  STEP 2 — page-1 dates (no filter, URL sort only)\n{'='*65}")
+            try:
+                await page.wait_for_function(
+                    "() => document.querySelectorAll('a[href*=\"/job/\"]').length >= 3",
+                    timeout=20_000,
+                )
+            except Exception:
+                pass
+            dates_pre = await _first3_dates(page)
+            print(f"  First 3 jobs (no filter):")
+            for dp, title in dates_pre:
+                print(f"    {dp}  {title}")
+
+            # ── Step 3: apply filters, read dropdown and dates ────────────────
+            print(f"\n{'='*65}\n  STEP 3 — apply category filter, read page-1 dates\n{'='*65}")
+            first_item = page.locator('[data-ph-at-id="facet-results-item"]').first
+            try:
+                panel_visible = await first_item.is_visible(timeout=2_000)
+            except Exception:
+                panel_visible = False
+            if not panel_visible:
+                print("  Panel not visible — skipping (unexpected for Duke)")
+
+            clicked = 0
+            for cat in _DUKE_CATEGORIES:
+                loc = page.locator('[data-ph-at-id="facet-results-item"]').filter(has_text=cat).first
+                if not await loc.is_visible():
+                    print(f"  [{cat}] NOT VISIBLE")
+                    continue
+                try:
+                    await loc.scroll_into_view_if_needed(timeout=3_000)
+                    await loc.click(timeout=5_000)
+                    await page.wait_for_timeout(300)
+                    print(f"  [{cat}] clicked")
+                    clicked += 1
+                except Exception as e:
+                    print(f"  [{cat}] FAILED: {str(e)[:60]}")
+            await page.wait_for_timeout(2_500)
+            print(f"  {clicked}/{len(_DUKE_CATEGORIES)} clicked")
+
+            sort_post_filter = await page.eval_on_selector('#sortselect', 'el => el.value')
+            print(f"  Dropdown after filter: '{sort_post_filter}'")
+
+            dates_post_filter = await _first3_dates(page)
+            print(f"  First 3 jobs (filtered, pre-sort):")
+            for dp, title in dates_post_filter:
+                print(f"    {dp}  {title}")
+
+            # ── Step 4: force 'Most recent' via native setter ─────────────────
+            print(f"\n{'='*65}\n  STEP 4 — force sort='Most recent' after filter\n{'='*65}")
+            first_href = await page.evaluate(
+                "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
+            )
+            print(f"  first_href before sort change: {first_href[-60:]!r}")
+            await page.select_option('#sortselect', 'Most recent')
+            await page.evaluate("""() => {
+                const sel = document.querySelector('#sortselect');
+                const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLSelectElement.prototype, 'value'
+                ).set;
+                setter.call(sel, 'Most recent');
+                ['input', 'change'].forEach(t =>
+                    sel.dispatchEvent(new Event(t, { bubbles: true, cancelable: true }))
+                );
+            }""")
+            rerender = False
+            try:
+                await page.wait_for_function(
+                    f"""() => {{
+                        const a = document.querySelector('a[href*="/job/"]');
+                        return a && a.href !== {repr(first_href)};
+                    }}""",
+                    timeout=15_000,
+                )
+                rerender = True
+                print(f"  Re-render fired — first href changed")
+            except Exception:
+                print(f"  Re-render timed out (15s) — first href unchanged")
+
+            sort_after_change = await page.eval_on_selector('#sortselect', 'el => el.value')
+            print(f"  Dropdown after sort change: '{sort_after_change}'")
+
+            # ── Step 4b: two-step seed — 'Most relevant' → 'Most recent' ────────
+            # UVA works because its React state is 'Most relevant'; seeding Duke
+            # to that state first may trigger React to recognise the next transition.
+            print(f"\n{'='*65}\n  STEP 4b — seed 'Most relevant' first, then 'Most recent'\n{'='*65}")
+            await page.select_option('#sortselect', 'Most relevant')
+            await page.evaluate("""() => {
+                const sel = document.querySelector('#sortselect');
+                const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLSelectElement.prototype, 'value'
+                ).set;
+                setter.call(sel, 'Most relevant');
+                ['input', 'change'].forEach(t =>
+                    sel.dispatchEvent(new Event(t, { bubbles: true, cancelable: true }))
+                );
+            }""")
+            await page.wait_for_timeout(1_500)
+            seed_val = await page.eval_on_selector('#sortselect', 'el => el.value')
+            print(f"  After seed to 'Most relevant': dropdown='{seed_val}'")
+            first_href_4b = await page.evaluate(
+                "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
+            )
+            await page.select_option('#sortselect', 'Most recent')
+            await page.evaluate("""() => {
+                const sel = document.querySelector('#sortselect');
+                const setter = Object.getOwnPropertyDescriptor(
+                    window.HTMLSelectElement.prototype, 'value'
+                ).set;
+                setter.call(sel, 'Most recent');
+                ['input', 'change'].forEach(t =>
+                    sel.dispatchEvent(new Event(t, { bubbles: true, cancelable: true }))
+                );
+            }""")
+            rerender_4b = False
+            try:
+                await page.wait_for_function(
+                    f"""() => {{
+                        const a = document.querySelector('a[href*="/job/"]');
+                        return a && a.href !== {repr(first_href_4b)};
+                    }}""",
+                    timeout=15_000,
+                )
+                rerender_4b = True
+                print(f"  Re-render fired after two-step seed")
+            except Exception:
+                print(f"  Re-render timed out (15s) after two-step seed")
+            val_4b = await page.eval_on_selector('#sortselect', 'el => el.value')
+            print(f"  Dropdown after: '{val_4b}'")
+            if rerender_4b:
+                dates_4b = await _first3_dates(page)
+                print(f"  First 3 jobs after 4b:")
+                for dp, title in dates_4b:
+                    print(f"    {dp}  {title}")
+
+            # ── Step 4c: visual click on the option element ───────────────────
+            # Bypasses React event wiring — simulates real user interaction.
+            print(f"\n{'='*65}\n  STEP 4c — visual click on #sortselect option element\n{'='*65}")
+            first_href_4c = await page.evaluate(
+                "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
+            )
+            try:
+                await page.click('#sortselect', timeout=5_000)
+                await page.wait_for_timeout(500)
+                # Select 'Most recent' option by clicking it
+                opt = page.locator('#sortselect option[value="Most recent"]')
+                if await opt.count():
+                    # Dispatch a direct click on the <select> with the value set first
+                    await page.evaluate("""() => {
+                        const sel = document.querySelector('#sortselect');
+                        sel.value = 'Most recent';
+                        sel.dispatchEvent(new MouseEvent('mousedown', {bubbles: true}));
+                        sel.dispatchEvent(new MouseEvent('mouseup',   {bubbles: true}));
+                        sel.dispatchEvent(new MouseEvent('click',     {bubbles: true}));
+                        sel.dispatchEvent(new Event('input',  {bubbles: true}));
+                        sel.dispatchEvent(new Event('change', {bubbles: true}));
+                    }""")
+                    print(f"  Dispatched mousedown/up/click/input/change on #sortselect")
+                else:
+                    print(f"  'Most recent' option element not found")
+            except Exception as e:
+                print(f"  Visual click error: {str(e)[:80]}")
+            rerender_4c = False
+            try:
+                await page.wait_for_function(
+                    f"""() => {{
+                        const a = document.querySelector('a[href*="/job/"]');
+                        return a && a.href !== {repr(first_href_4c)};
+                    }}""",
+                    timeout=15_000,
+                )
+                rerender_4c = True
+                print(f"  Re-render fired after visual click")
+            except Exception:
+                print(f"  Re-render timed out (15s) after visual click")
+            val_4c = await page.eval_on_selector('#sortselect', 'el => el.value')
+            print(f"  Dropdown after: '{val_4c}'")
+            if rerender_4c:
+                dates_4c = await _first3_dates(page)
+                print(f"  First 3 jobs after 4c:")
+                for dp, title in dates_4c:
+                    print(f"    {dp}  {title}")
+
+            # ── Step 5: page-1 dates after sort change ────────────────────────
+            print(f"\n{'='*65}\n  STEP 5 — page-1 dates after forced sort\n{'='*65}")
+            dates_post_sort = await _first3_dates(page)
+            print(f"  First 3 jobs (filtered + forced sort):")
+            for dp, title in dates_post_sort:
+                print(f"    {dp}  {title}")
+
+            # Summary table
+            print(f"\n  {'─'*55}")
+            print(f"  Re-render: 4a={rerender}  4b={rerender_4b}  4c={rerender_4c}")
+            print(f"  Page-1 job #1 date: BEFORE filter={dates_pre[0][0] if dates_pre else '-'}  "
+                  f"after filter={dates_post_filter[0][0] if dates_post_filter else '-'}  "
+                  f"after sort={dates_post_sort[0][0] if dates_post_sort else '-'}")
+
+            # ── Step 6: paginate to page 2, check date ────────────────────────
+            print(f"\n{'='*65}\n  STEP 6 — paginate to page 2 (does it load? what date?)\n{'='*65}")
+            next_btn = page.locator('[data-ph-at-id="pagination-next-link"]').last
+            if not await next_btn.is_visible():
+                print(f"  No next button visible — stopped at page 1")
+            else:
+                href_before_p2 = await page.evaluate(
+                    "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
+                )
+                await next_btn.click()
+                p2_loaded = False
+                try:
+                    await page.wait_for_function(
+                        f"""() => {{
+                            const a = document.querySelector('a[href*="/job/"]');
+                            return a && a.href !== {repr(href_before_p2)};
+                        }}""",
+                        timeout=35_000,
+                    )
+                    p2_loaded = True
+                    print(f"  Page 2 loaded (DOM changed within 35s)")
+                except Exception:
+                    print(f"  Page 2 timed out (35s)")
+                if p2_loaded:
+                    p2_links = await page.evaluate(_JOB_LINKS_JS)
+                    p2_date = None
+                    if p2_links:
+                        try:
+                            await detail.goto(p2_links[0]["url"], wait_until="domcontentloaded", timeout=25_000)
+                            await detail.wait_for_timeout(1_200)
+                            p2_date = await detail.evaluate(_JSON_LD_DATE_JS)
+                        except Exception:
+                            p2_date = "fetch-err"
+                    print(f"  Page 2 first job: {p2_date}  {p2_links[0]['title'] if p2_links else '—'}")
+
+        except Exception as e:
+            print(f"\n  TOP-LEVEL ERROR: {e}")
+        finally:
+            await page.close()
+            await detail.close()
+        await browser.close()
+
+
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1 and sys.argv[1] == "musc-cxs":
@@ -700,5 +1369,11 @@ if __name__ == "__main__":
         asyncio.run(probe_phenom_categories())
     elif len(sys.argv) > 1 and sys.argv[1] == "emory-categories":
         asyncio.run(probe_emory_categories())
+    elif len(sys.argv) > 1 and sys.argv[1] == "phenom-sort":
+        asyncio.run(probe_phenom_sort())
+    elif len(sys.argv) > 1 and sys.argv[1] == "phenom-filter-health":
+        asyncio.run(probe_phenom_filter_health())
+    elif len(sys.argv) > 1 and sys.argv[1] == "duke-sort-fix":
+        asyncio.run(probe_duke_sort_fix())
     else:
         asyncio.run(main())
