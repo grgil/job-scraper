@@ -593,11 +593,16 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
         current_sort = await page.eval_on_selector('#sortselect', 'el => el.value')
         _log(f"  Sort dropdown value after load: '{current_sort}'")
 
-        first_href_before = await page.evaluate(
-            """() => (document.querySelector('a[href*="/job/"]') || {}).href || ''"""
-        )
-
-        if current_sort == 'Most relevant':
+        # URL already specifies date sort — results are already ordered correctly.
+        # Some Phenom deployments (UVA, VCU, Duke) still show 'Most relevant' in the
+        # dropdown despite the URL param; manipulating the dropdown would trigger a
+        # re-render that never changes the first href, causing a false sort WARN.
+        if 'sortBy=postingdate' in url:
+            _log("  Sort controlled by URL parameter — skipping dropdown")
+        elif current_sort == 'Most relevant':
+            first_href_before = await page.evaluate(
+                """() => (document.querySelector('a[href*="/job/"]') || {}).href || ''"""
+            )
             _log("  Selecting 'Most recent' and dispatching change event ...")
             await page.select_option('#sortselect', 'Most recent')
             await page.evaluate("""() => {
@@ -701,7 +706,7 @@ async def _get_next_page_links(search_page) -> list[dict]:
         await search_page.wait_for_function(
             """() => Array.from(document.querySelectorAll('a[href*="/job/"]'))
                 .filter(a => (a.innerText || a.textContent || '').trim().length > 8)
-                .length >= 5""",
+                .length >= 1""",
             timeout=25_000,
         )
     except PlaywrightTimeoutError:
@@ -774,10 +779,12 @@ async def scrape_site(browser, site: dict, since_date: date) -> tuple[list[dict]
 # Workday ATS
 # ---------------------------------------------------------------------------
 
-async def _get_workday_next_page(page) -> list[dict]:
+async def _get_workday_next_page(page) -> tuple[list[dict], bool]:
+    """Returns (links, timed_out). timed_out=True means the button was clicked but the
+    DOM did not update — caller uses this with CXS buffer state to decide whether to WARN."""
     next_btn = page.locator('button[data-uxi-element-id="next"], button[aria-label="next"]').last
     if not await next_btn.is_visible() or not await next_btn.is_enabled():
-        return []
+        return [], False
     first_href = await page.evaluate(
         """() => (document.querySelector('a[data-automation-id="jobTitle"]') || {}).href || ''"""
     )
@@ -797,8 +804,7 @@ async def _get_workday_next_page(page) -> list[dict]:
             timeout=15_000,
         )
     except PlaywrightTimeoutError:
-        _warn("next page did not load")
-        return []
+        return [], True  # caller decides — has CXS buffer context we don't
     return await page.evaluate("""() => {
         const seen = new Set();
         const results = [];
@@ -809,7 +815,7 @@ async def _get_workday_next_page(page) -> list[dict]:
             if (title.length > 3) results.push({ title, url: a.href });
         });
         return results;
-    }""")
+    }"""), False
 
 
 _WORKDAY_DOM_LINKS_JS = """() => {
@@ -982,15 +988,21 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                 break
 
             # ── Advance to next page ──────────────────────────────────────────
-            # _get_workday_next_page clicks, waits for DOM refresh, and returns links.
-            # CXS note: the API response often fires before the DOM updates. If the
-            # DOM-change wait times out but _cxs_buf is already populated, we still
-            # have valid data — don't break (VUMC consistently hits this on page 2→3).
-            next_links = await _get_workday_next_page(search_page)
+            # _get_workday_next_page returns (links, timed_out).
+            # timed_out=True: button was clicked but DOM didn't update.
+            # For CXS sites: no CXS response + DOM timeout = genuine last page (no WARN).
+            # For DOM-only sites or when CXS fired but DOM lagged: normal paths below.
+            next_links, pg_timed_out = await _get_workday_next_page(search_page)
             if not next_links:
                 if use_cxs and _cxs_buf:
                     pass  # CXS response arrived before DOM settled — continue
+                elif pg_timed_out and not use_cxs:
+                    # DOM-only fallback path timed out — real failure
+                    _warn("next page did not load")
+                    break
                 else:
+                    # Normal end (button gone/disabled) or CXS site where neither
+                    # DOM nor CXS fired — reliable "no more pages" for Workday CXS
                     _log("  No more pages")
                     break
             if use_cxs and not _cxs_buf and next_links:
