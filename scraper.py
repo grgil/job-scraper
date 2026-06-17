@@ -625,7 +625,7 @@ async def _get_job_links(page, url: str, categories: list[str] | None = None) ->
                 )
                 _log("  Result list refreshed after sort change")
             except PlaywrightTimeoutError:
-                _log("  Sort re-render no change — dropdown cosmetic on this deployment")
+                pass
         elif current_sort == '':
             _log("  Sort dropdown empty — sort likely URL-controlled, skipping")
 
