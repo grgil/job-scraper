@@ -877,7 +877,7 @@ async def scrape_workday_site(browser, site: dict, since_date: date) -> tuple[li
                 )
             except PlaywrightTimeoutError:
                 _warn("job titles timed out")
-                return [], 0, None
+                return [], 0, 0, None, 0
 
         results = []
         skipped_excl = 0
