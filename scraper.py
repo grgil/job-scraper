@@ -196,7 +196,7 @@ TITLE_EXCLUDE_PHRASES = {
     "care partner", "patient support assistant",
     "emergency department tech", "ed tech",
     "primary therapist",
-    "housekeeper", "housekeeping", "environmental services",
+    "housekeeper", "housekeeping", "environmental services", "environmental",
     "food service", "food and nutrition", "dietary aide", "dietary tech", "dietary assistant",
     "dietitian", "kitchen",
     "security officer", "security guard", "public safety officer",
@@ -244,6 +244,10 @@ TITLE_EXCLUDE_PHRASES = {
     # Access / scheduling front-line roles
     "patient access rep",
     "patient access scheduler",
+    "patient care coordinator",
+    "patient service spec",
+    "financial care",
+    "administrative associate",
     # Facilities / safety
     "public safety",
 }
@@ -259,6 +263,8 @@ TITLE_EXCLUDE_WORDS = {
     "president",   # also matches vice president
     "hvac",
     "chef",
+    "pcc",
+    "registration",
 }
 
 # ---------------------------------------------------------------------------
