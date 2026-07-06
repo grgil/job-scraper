@@ -1066,7 +1066,7 @@ async def probe_phenom_filter_health() -> None:
         await browser.close()
 
 
-_DUKE_URL = "https://careers.dukehealth.org/us/en/search-results?sortBy=postingdate&descending=true"
+_DUKE_URL = "https://careers.dukehealth.org/us/en/search-results"
 _DUKE_CATEGORIES = ["Corporate", "Information Technology", "Revenue Management", "Administrative and Support Services"]
 
 
@@ -1310,36 +1310,63 @@ async def probe_duke_sort_fix() -> None:
                 print(f"    {dp}  {title}")
 
             # Summary table
-            print(f"\n  {'─'*55}")
+            print(f"\n  {'-'*55}")
             print(f"  Re-render: 4a={rerender}  4b={rerender_4b}  4c={rerender_4c}")
             print(f"  Page-1 job #1 date: BEFORE filter={dates_pre[0][0] if dates_pre else '-'}  "
                   f"after filter={dates_post_filter[0][0] if dates_post_filter else '-'}  "
                   f"after sort={dates_post_sort[0][0] if dates_post_sort else '-'}")
 
             # ── Step 6: paginate to page 2, check date ────────────────────────
+            # 6a: compare unfiltered vs text-filtered first_href (Theory A)
+            # 6b: if unfiltered times out, retry wait with text-filtered selector (Theory A fix)
+            # Step 7: reload without sortBy param and repeat (Theory B)
             print(f"\n{'='*65}\n  STEP 6 — paginate to page 2 (does it load? what date?)\n{'='*65}")
             next_btn = page.locator('[data-ph-at-id="pagination-next-link"]').last
             if not await next_btn.is_visible():
                 print(f"  No next button visible — stopped at page 1")
             else:
-                href_before_p2 = await page.evaluate(
+                # 6a: capture both selector variants BEFORE clicking
+                href_unfiltered = await page.evaluate(
                     "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
                 )
+                href_filtered = await page.evaluate("""() => {
+                    const a = Array.from(document.querySelectorAll('a[href*="/job/"]'))
+                        .find(a => (a.innerText || a.textContent || '').trim().length > 8);
+                    return a ? a.href : '';
+                }""")
+                print(f"  6a — first_href (unfiltered): ...{href_unfiltered[-70:]!r}")
+                print(f"  6a — first_href (filtered):   ...{href_filtered[-70:]!r}")
+                print(f"  6a — Same? {href_unfiltered == href_filtered}  {'<-- Theory A CONFIRMED: breadcrumb is first' if href_unfiltered != href_filtered else '(no breadcrumb divergence)'}")
+
                 await next_btn.click()
-                p2_loaded = False
+
+                # 6: try unfiltered selector (current scraper logic)
+                p2_loaded_unfiltered = False
                 try:
                     await page.wait_for_function(
                         f"""() => {{
                             const a = document.querySelector('a[href*="/job/"]');
-                            return a && a.href !== {repr(href_before_p2)};
+                            return a && a.href !== {repr(href_unfiltered)};
                         }}""",
                         timeout=35_000,
                     )
-                    p2_loaded = True
-                    print(f"  Page 2 loaded (DOM changed within 35s)")
+                    p2_loaded_unfiltered = True
+                    print(f"  6  — unfiltered wait: PAGE 2 LOADED (DOM changed within 35s)")
                 except Exception:
-                    print(f"  Page 2 timed out (35s)")
-                if p2_loaded:
+                    print(f"  6  — unfiltered wait: TIMED OUT (35s) — this is the current scraper failure")
+
+                # 6b: if unfiltered timed out, check if filtered selector NOW shows new href
+                # (page may have loaded but unfiltered first link stayed the same)
+                href_filtered_now = await page.evaluate("""() => {
+                    const a = Array.from(document.querySelectorAll('a[href*="/job/"]'))
+                        .find(a => (a.innerText || a.textContent || '').trim().length > 8);
+                    return a ? a.href : '';
+                }""")
+                filtered_changed = href_filtered_now != href_filtered and href_filtered_now != ''
+                print(f"  6b — filtered href after click: ...{href_filtered_now[-70:]!r}")
+                print(f"  6b — Filtered changed? {filtered_changed}  {'<-- Theory A fix WORKS: page 2 DID load' if filtered_changed and not p2_loaded_unfiltered else ''}")
+
+                if p2_loaded_unfiltered or filtered_changed:
                     p2_links = await page.evaluate(_JOB_LINKS_JS)
                     p2_date = None
                     if p2_links:
@@ -1350,6 +1377,68 @@ async def probe_duke_sort_fix() -> None:
                         except Exception:
                             p2_date = "fetch-err"
                     print(f"  Page 2 first job: {p2_date}  {p2_links[0]['title'] if p2_links else '—'}")
+                else:
+                    print(f"  Page 2: neither selector loaded new content — genuine pagination failure")
+
+            # ── Step 7: reload WITHOUT sortBy param, repeat pagination (Theory B) ─
+            print(f"\n{'='*65}\n  STEP 7 — reload without sortBy param (Theory B)\n{'='*65}")
+            _DUKE_URL_NO_SORT = "https://careers.dukehealth.org/us/en/search-results"
+            await page.goto(_DUKE_URL_NO_SORT, wait_until="domcontentloaded", timeout=60_000)
+            try:
+                await page.wait_for_selector('#sortselect', timeout=30_000)
+                sort_7 = await page.eval_on_selector('#sortselect', 'el => el.value')
+                print(f"  Dropdown after load (no sort param): '{sort_7}'")
+            except Exception:
+                print(f"  #sortselect not found")
+            # Re-apply categories
+            clicked7 = 0
+            for cat in _DUKE_CATEGORIES:
+                loc = page.locator('[data-ph-at-id="facet-results-item"]').filter(has_text=cat).first
+                if not await loc.is_visible():
+                    continue
+                try:
+                    await loc.scroll_into_view_if_needed(timeout=3_000)
+                    await loc.click(timeout=5_000)
+                    await page.wait_for_timeout(300)
+                    clicked7 += 1
+                except Exception:
+                    pass
+            if clicked7:
+                await page.wait_for_timeout(2_500)
+            print(f"  {clicked7}/{len(_DUKE_CATEGORIES)} categories clicked")
+
+            next_btn7 = page.locator('[data-ph-at-id="pagination-next-link"]').last
+            if not await next_btn7.is_visible():
+                print(f"  No next button visible after filter (may be only 1 page)")
+            else:
+                href_unf7 = await page.evaluate(
+                    "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
+                )
+                href_flt7 = await page.evaluate("""() => {
+                    const a = Array.from(document.querySelectorAll('a[href*="/job/"]'))
+                        .find(a => (a.innerText || a.textContent || '').trim().length > 8);
+                    return a ? a.href : '';
+                }""")
+                print(f"  first_href unfiltered: ...{href_unf7[-70:]!r}")
+                print(f"  first_href filtered:   ...{href_flt7[-70:]!r}")
+                await next_btn7.click()
+                p2_7 = False
+                try:
+                    await page.wait_for_function(
+                        f"""() => {{
+                            const a = Array.from(document.querySelectorAll('a[href*="/job/"]'))
+                                .find(a => (a.innerText || a.textContent || '').trim().length > 8);
+                            return a && a.href !== {repr(href_flt7)};
+                        }}""",
+                        timeout=35_000,
+                    )
+                    p2_7 = True
+                    print(f"  7 — filtered wait: PAGE 2 LOADED  {'<-- Theory B CONFIRMED: no-sort URL + filtered selector works' if not p2_loaded_unfiltered else ''}")
+                except Exception:
+                    print(f"  7 — filtered wait: TIMED OUT (genuine pagination failure on no-sort URL too)")
+                if p2_7:
+                    p2_links7 = await page.evaluate(_JOB_LINKS_JS)
+                    print(f"  Page 2 first job: {p2_links7[0]['title'] if p2_links7 else '—'}")
 
         except Exception as e:
             print(f"\n  TOP-LEVEL ERROR: {e}")

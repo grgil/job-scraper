@@ -67,10 +67,7 @@ SITES = [
     },
     {
         "name": "Duke Health",
-        "url": (
-            "https://careers.dukehealth.org/us/en/search-results"
-            "?sortBy=postingdate&descending=true"
-        ),
+        "url": "https://careers.dukehealth.org/us/en/search-results",
         "categories": [
             "Corporate",
             "Information Technology",
@@ -193,7 +190,7 @@ TITLE_EXCLUDE_PHRASES = {
     "pharmacist", "pharmacy technician", "pharmacy tech", "pharmacy specialist", "pharmacy intern",
     "medical assistant", "medical scribe",
     "patient transporter", "patient transport",
-    "care partner", "patient support assistant",
+    "care partner", "patient support assistant", "provider support assistant",
     "emergency department tech", "ed tech",
     "primary therapist",
     "housekeeper", "housekeeping", "environmental services", "environmental",
@@ -204,7 +201,7 @@ TITLE_EXCLUDE_PHRASES = {
     "maintenance technician", "facilities technician",
     "valet", "groundskeeper", "supply chain",
     "patient scheduler", "appointment scheduler", "clinic scheduler",
-    "front desk", "receptionist", "welcome", "parking assistant",
+    "front desk", "receptionist", "welcome", "parking assistant", "guest services representative",
     "infection preventionist",
     "coding specialist", "coding denials",
     "unit clerk", "unit secretary", "ward clerk",
@@ -214,7 +211,7 @@ TITLE_EXCLUDE_PHRASES = {
     "billing follow up",
     "acct resolution",
     "payment variance",
-    "postdoc", "post doc", "post-doc",  # postdoctoral / post doctoral / post-doctoral
+    "postdoc", "post doc", "post-doc", "post-graduate",  # postdoctoral / post doctoral / post-doctoral / post-graduate
     "food &",
     "dining",
     "medical lab",
@@ -245,7 +242,7 @@ TITLE_EXCLUDE_PHRASES = {
     "patient access rep",
     "patient access scheduler",
     "patient care coordinator",
-    "patient service spec",
+    "patient service spec", "patient service assoc",
     "financial care",
     "administrative associate",
     # Facilities / safety
@@ -261,6 +258,7 @@ TITLE_EXCLUDE_WORDS = {
     "lcsw", "lpc",
     "cook",
     "president",   # also matches vice president
+    "professor",
     "hvac",
     "chef",
     "pcc",
@@ -696,26 +694,41 @@ async def _get_next_page_links(search_page) -> list[dict]:
     if not await next_btn.is_visible():
         return []
 
-    first_href = await search_page.evaluate(
-        "() => (document.querySelector('a[href*=\"/job/\"]') || {}).href || ''"
-    )
+    # Use text-filtered selector (mirrors _PHENOM_JOB_LINKS_JS) so nav/breadcrumb
+    # elements with /job/ in their href don't act as a false stable reference.
+    first_href = await search_page.evaluate("""() => {
+        const a = Array.from(document.querySelectorAll('a[href*="/job/"]'))
+            .find(a => (a.innerText || a.textContent || '').trim().length > 8);
+        return a ? a.href : '';
+    }""")
+    # Capture current page's full job-card URL set for set-change fallback.
+    page1_urls = set(j["url"] for j in await search_page.evaluate(_PHENOM_JOB_LINKS_JS))
+
     await next_btn.click()
 
     try:
         await search_page.wait_for_function(
             f"""() => {{
-                const a = document.querySelector('a[href*="/job/"]');
+                const a = Array.from(document.querySelectorAll('a[href*="/job/"]'))
+                    .find(a => (a.innerText || a.textContent || '').trim().length > 8);
                 return a && a.href !== {repr(first_href)};
             }}""",
-            timeout=35_000,
+            timeout=60_000,
         )
         await search_page.wait_for_function(
             """() => Array.from(document.querySelectorAll('a[href*="/job/"]'))
                 .filter(a => (a.innerText || a.textContent || '').trim().length > 8)
                 .length >= 1""",
-            timeout=25_000,
+            timeout=30_000,
         )
     except PlaywrightTimeoutError:
+        # Fallback: first job href didn't change within 60s, but check if the overall
+        # job set changed (handles stable top-ranked job across pages with relevance sort).
+        new_links = await search_page.evaluate(_PHENOM_JOB_LINKS_JS)
+        new_urls = set(j["url"] for j in new_links)
+        if new_urls and new_urls != page1_urls:
+            _log("  Next page: first href stable but job set changed — proceeding")
+            return new_links
         _warn("next page did not load")
         return []
 
@@ -792,6 +805,8 @@ async def _get_workday_next_page(page) -> tuple[list[dict], bool]:
     DOM did not update — caller uses this with CXS buffer state to decide whether to WARN."""
     next_btn = page.locator('button[data-uxi-element-id="next"], button[aria-label="next"]').last
     if not await next_btn.is_visible() or not await next_btn.is_enabled():
+        return [], False
+    if await next_btn.get_attribute("aria-disabled") == "true":
         return [], False
     first_href = await page.evaluate(
         """() => (document.querySelector('a[data-automation-id="jobTitle"]') || {}).href || ''"""
