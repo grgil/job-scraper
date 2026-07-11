@@ -1,6 +1,6 @@
 # Health Job Scraper
 
-A personal job search automation tool built to solve a real problem: health system careers pages don't have good cross-site alerting, and manually checking 14 portals daily isn't realistic. The scraper monitors those portals across four ATS platforms (Workday, Phenom People, iCIMS, DirectEmployers), filters out clinical and non-target roles, scores matches by relevance, and delivers a daily digest email — running unattended on a GitHub Actions cron schedule.
+A personal job search automation tool built to solve a real problem: health system careers pages don't have good cross-site alerting, and manually checking 14 portals daily isn't realistic. The scraper monitors those portals across four ATS platforms (Workday, Phenom People, iCIMS, DirectEmployers), filters out clinical and non-target roles, and delivers a daily digest email — running unattended on a GitHub Actions cron schedule.
 
 Built with Claude (Anthropic) as a coding collaborator. I drove the requirements, design decisions, and debugging; Claude handled implementation I didn't yet have fluency in. The goal was a working tool I understood well enough to maintain and extend independently.
 
@@ -45,7 +45,6 @@ EMAIL_APP_PASS=xxxx xxxx xxxx xxxx
 
 ```
 python scraper.py               # daily run (today's new jobs)
-python scraper.py --weekly      # weekly recap (primary-only, 7-day lookback)
 python scraper.py --no-email    # write preview_*.html instead of sending
 python scraper.py --since YYYY-MM-DD  # override the since-date
 ```
@@ -57,9 +56,6 @@ python scraper.py --since YYYY-MM-DD  # override the since-date
 | Workflow | Schedule | Trigger |
 |----------|----------|---------|
 | `scraper.yml` | Daily **6:00 AM UTC** (2 AM EDT) | `workflow_dispatch` |
-| `scraper_weekly.yml` | Sunday **7:00 AM UTC** (3 AM EDT) | `workflow_dispatch` |
-
-The weekly run uses `--weekly`: 7-day lookback, primary-only scoring, sends a `[Job Alert [Recap]]` digest. It runs one hour after the daily cron on Sundays to avoid `seen_jobs.json` push conflicts.
 
 ### Required repository secrets
 
@@ -73,20 +69,15 @@ The weekly run uses `--weekly`: 7-day lookback, primary-only scoring, sends a `[
 
 `seen_jobs.json` is committed back to the repo after each run by the workflow bot. This deduplicates jobs across runs and prevents batch-refresh floods (e.g. Workday portals that reset all `datePosted` fields nightly). The first run after setup will include all currently active jobs; subsequent runs show only new ones.
 
-The file uses a discriminated union schema — values are either a plain date string (secondary job or pre-schema entry) or a metadata object (primary job):
+Each entry maps a job URL (or a stable Workday `domain:reqid` key) to the ISO date it was first seen:
 
 ```json
 {
-  "https://url-secondary": "2026-05-21",
-  "https://url-primary": {
-    "first_seen": "2026-05-21",
-    "title": "Clinical Data Analyst",
-    "site": "UVA Health"
-  }
+  "https://url-example": "2026-05-21"
 }
 ```
 
-Primary metadata is used by the weekly recap to recover jobs the rescrape may have missed (e.g. listings that expired mid-week). Both value types are pruned at 45 days.
+Entries are pruned at 45 days. (Older entries may still contain a metadata object instead of a plain date string — a leftover from a since-removed feature; both formats are read fine, but new entries are always plain strings.)
 
 ## Performance report
 

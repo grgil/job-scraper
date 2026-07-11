@@ -188,7 +188,7 @@ TITLE_EXCLUDE_PHRASES = {
     "ophthalm", "optometr",
     "dental assistant", "dental hygienist",
     "pharmacist", "pharmacy technician", "pharmacy tech", "pharmacy specialist", "pharmacy intern",
-    "medical assistant", "medical scribe",
+    "medical assistant", "medical office assistant", "medical scribe",
     "patient transporter", "patient transport",
     "care partner", "patient support assistant", "provider support assistant",
     "emergency department tech", "ed tech",
@@ -224,6 +224,7 @@ TITLE_EXCLUDE_PHRASES = {
     "research administrator",
     "clinical research coordinator",
     "research scientist",
+    "research specialist",
     "virtual interview",
     "lab specialist",
     "lab tech",
@@ -243,10 +244,13 @@ TITLE_EXCLUDE_PHRASES = {
     "patient access scheduler",
     "patient care coordinator",
     "patient service spec", "patient service assoc",
+    "patient representative", "patient services representative",
     "financial care",
     "administrative associate",
     # Facilities / safety
     "public safety",
+    # Ascension bulk-posts these as filler/task-based reqs, not real openings
+    "temporary change management",
 }
 TITLE_EXCLUDE_WORDS = {
     "rn", "lpn", "lvn", "cna", "crna", "cns", "emt", "paramedic",
@@ -263,92 +267,7 @@ TITLE_EXCLUDE_WORDS = {
     "chef",
     "pcc",
     "registration",
-}
-
-# ---------------------------------------------------------------------------
-# Priority scoring config — tune patterns and org tiers here
-# ---------------------------------------------------------------------------
-# Role families: health informatics · clinical data analytics · clinical workflow/
-# process improvement · clinical application support/design · research data mgmt ·
-# patient quality & safety · clinical documentation integrity ·
-# population/community health analytics · health BI/BA
-PRIORITY_CONFIG: dict = {
-    "strong_title_patterns": [
-        # Health informatics
-        r"informatics",
-        # Clinical data analytics
-        r"clinical data anal",      # "clinical data analyst/analytics", not "coordinator"
-        r"clinical analytics",
-        # Clinical application support / design
-        r"\bepic\b",                # Epic EHR — almost always an application analyst role
-        r"ehr (analyst|specialist|consultant|build)",
-        r"emr (analyst|specialist|consultant|build)",
-        r"application (analyst|specialist|build|consultant)",
-        # Research data management
-        r"research data",
-        r"data governance",
-        # Patient quality & safety
-        r"patient safety (analyst|specialist|data)",
-        r"quality (improvement analyst|data analyst)",
-        # Clinical documentation integrity
-        r"documentation integrity",
-        r"\bcdi\b",
-        # Population / community health analytics
-        r"population health",
-        r"community health (analyst|data|informatics)",
-        r"public health (analyst|data|informatics)",
-        # Health BI / analytics
-        r"\banalytics\b",
-        r"business intelligence",
-        r"\bbi (analyst|developer|specialist)\b",
-        r"reporting analyst",
-        r"decision support",
-        r"data engineer",
-        r"data scientist",
-        r"data architect",
-        # Clinical workflow / process improvement
-        r"clinical workflow",
-        r"workflow (analyst|specialist|consultant)",
-        r"process improvement (analyst|specialist|consultant)",
-        r"performance improvement (analyst|specialist)",
-        r"clinical data",
-    ],
-    "supporting_title_patterns": [
-        r"data analyst",
-        r"data specialist",
-        r"data manager",
-        r"systems analyst",
-        r"outcomes analyst",
-        r"outcomes research",
-        r"health(care)? analyst",
-        r"business analyst",
-        r"quality analyst",
-        r"quality improvement\b",
-    ],
-    "downgrade_patterns": [
-        r"clinical documentation specialist",   # medical records/HIM, not CDI
-        r"charge entry",
-        r"medical record",
-        r"transcription",
-        r"\bdirector\b",
-    ],
-    # All get +1 score boost — must match "name" field in site config exactly
-    "preferred_orgs": [
-        "UVA Health",
-        "VCU Health",
-        "Bon Secours",
-        "VUMC",
-        "Duke Health",
-        "Emory Healthcare",
-        "Shepherd Center",
-    ],
-    # Subset for teal color accent — no scoring difference from other preferred orgs
-    "richmond_orgs": [
-        "UVA Health",
-        "VCU Health",
-        "Bon Secours",
-    ],
-    "score_thresholds": {"primary": 3},
+    "facilities",
 }
 
 # iCIMS ATS
@@ -1444,24 +1363,6 @@ for _s in EMORY_SITES:   _s["scraper"] = scrape_emory_site
 # Title exclusion filter
 # ---------------------------------------------------------------------------
 
-def _priority_score(job: dict, site_name: str) -> str:
-    t = job["title"].lower()
-    score = 0
-    for pat in PRIORITY_CONFIG["strong_title_patterns"]:
-        if re.search(pat, t, re.IGNORECASE):
-            score += 3
-    for pat in PRIORITY_CONFIG["supporting_title_patterns"]:
-        if re.search(pat, t, re.IGNORECASE):
-            score += 1
-    for pat in PRIORITY_CONFIG["downgrade_patterns"]:
-        if re.search(pat, t, re.IGNORECASE):
-            score -= 2
-    if site_name in PRIORITY_CONFIG["preferred_orgs"]:
-        score += 1
-    return "primary" if score >= PRIORITY_CONFIG["score_thresholds"]["primary"] else "secondary"
-
-
-
 def _is_excluded_title(title: str, extra_words: frozenset[str] = frozenset()) -> bool:
     t = title.lower()
     if any(phrase in t for phrase in TITLE_EXCLUDE_PHRASES):
@@ -1479,15 +1380,6 @@ def _has_content(results: list["SiteResult"], extra_words: frozenset[str] = froz
     return visible > 0 or any(r.skipped_excl or r.skipped_err or r.sort_warning for r in results)
 
 
-def _filter_primary(results: list["SiteResult"]) -> list["SiteResult"]:
-    return [
-        replace(r, jobs=[j for j in r.jobs
-                         if not _is_excluded_title(j["title"])
-                         and _priority_score(j, r.name) == "primary"])
-        for r in results
-    ]
-
-
 def _dedup(results: list["SiteResult"], seen_urls: set[str], seen_record: dict, today_str: str) -> list["SiteResult"]:
     deduped = []
     for r in results:
@@ -1499,13 +1391,9 @@ def _dedup(results: list["SiteResult"], seen_urls: set[str], seen_record: dict, 
                 _log(f"  SEEN — skipping {j.get('title', '')[:60]}")
             else:
                 fresh.append(j)
-                if _priority_score(j, r.name) == "primary":
-                    v: str | dict = {"first_seen": today_str, "title": j["title"], "site": r.name}
-                else:
-                    v = today_str
-                seen_record[url] = v
+                seen_record[url] = today_str
                 if req_key:
-                    seen_record[req_key] = v  # stable key survives URL slug changes
+                    seen_record[req_key] = today_str  # stable key survives URL slug changes
         deduped.append(replace(r, jobs=fresh))
     return deduped
 
@@ -1559,6 +1447,9 @@ def _classify_issue_line(line: str) -> tuple[str, str | None] | None:
     return None
 
 
+_EMAIL_SUPPRESSED_CATEGORIES = frozenset({"pagination"})
+
+
 def _last_issues_from_log() -> str:
     if not LOG_FILE.exists():
         return "Last warn/fail: log unavailable"
@@ -1572,6 +1463,8 @@ def _last_issues_from_log() -> str:
         if not result:
             continue
         category, site = result
+        if category in _EMAIL_SUPPRESSED_CATEGORIES:
+            continue
         d = ts_m.group(1)
         bucket = issues_by_date.setdefault(d, [])
         if (category, site) not in bucket:
@@ -1613,18 +1506,8 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped_excl: int, ski
     shown_jobs = [j for j in jobs if not _is_excluded_title(j["title"], extra_words)]
     filtered = len(jobs) - len(shown_jobs)
     count = len(shown_jobs)
-    is_richmond = site_name in PRIORITY_CONFIG["richmond_orgs"]
-    scored = sorted(
-        [(j, _priority_score(j, site_name)) for j in shown_jobs],
-        key=lambda x: 0 if x[1] == "primary" else 1,
-    )
     job_items_html = []
-    for job, priority in scored:
-        if priority == "primary":
-            badge_color = "#0d9488" if is_richmond else "#d97706"
-            badge = f'<span style="color:{badge_color};font-weight:bold;margin-right:4px;">★</span>'
-        else:
-            badge = ""
+    for job in shown_jobs:
         subtext_parts = [
             job.get("location") or "Location not listed",
             job.get("occupational_category", ""),
@@ -1634,7 +1517,7 @@ def _build_site_section(site_name: str, jobs: list[dict], skipped_excl: int, ski
         subtext = " · ".join(p for p in subtext_parts if p)
         job_items_html.append(
             f'<li style="margin-bottom:10px;">'
-            f'{badge}<a href="{job["url"]}" style="color:#1a4a7a;font-weight:bold;">{job["title"]}</a><br>'
+            f'<a href="{job["url"]}" style="color:#1a4a7a;font-weight:bold;">{job["title"]}</a><br>'
             f'<span style="color:#666;font-size:13px;">{subtext}</span>'
             f'</li>'
         )
@@ -1690,10 +1573,9 @@ def build_html_email(results: list[SiteResult], today: date, extra_words: frozen
 </html>"""
 
 
-def send_email(results: list[SiteResult], today: date, label: str = "", extra_words: frozenset[str] = frozenset(), health_html: str = "") -> None:
+def send_email(results: list[SiteResult], today: date, extra_words: frozenset[str] = frozenset(), health_html: str = "") -> None:
     total = sum(1 for r in results for j in r.jobs if not _is_excluded_title(j["title"], extra_words))
-    tag = f" [{label}]" if label else ""
-    subject = f"[Job Alert{tag}] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
+    subject = f"[Job Alert] {total} new posting{'s' if total != 1 else ''} — {today.strftime('%Y-%m-%d')}"
     html = build_html_email(results, today, extra_words, health_html)
 
     msg = MIMEMultipart("alternative")
@@ -1740,16 +1622,10 @@ async def main() -> None:
     parser.add_argument("--since", metavar="YYYY-MM-DD", help="Override since-date (default: yesterday)")
     parser.add_argument("--no-email", action="store_true", help="Skip email; write HTML previews to disk instead")
     parser.add_argument("--no-save",  action="store_true", help="Skip writing seen_jobs.json (safe for local runs)")
-    parser.add_argument("--weekly", action="store_true", help="Weekly recap: 7-day lookback, primary-only, updates seen_jobs")
     parser.add_argument("--sites", metavar="NAME", nargs="+", help="Run only these site names (partial match, case-insensitive)")
     args = parser.parse_args()
 
-    weekly = args.weekly
-    since_date = (
-        (date.today() - timedelta(days=7)) if weekly
-        else date.fromisoformat(args.since) if args.since
-        else TODAY
-    )
+    since_date = date.fromisoformat(args.since) if args.since else TODAY
     no_email = args.no_email
     no_save  = args.no_save
 
@@ -1766,28 +1642,11 @@ async def main() -> None:
             try:
                 sem = asyncio.Semaphore(4)
 
-                # For weekly runs, scale up page caps (the consecutive_empty stop is the
-                # real terminator; max_pages is just a daily safety net). Also drop any
-                # max_results caps (batch-refresh guards not needed for 7-day lookback).
-                # Phenom gets 5× (serial per-job fetches are slow so UVA/Duke run deep);
-                # Workday + iCIMS get 3× (batch page loads, faster to paginate).
-                def _weekly_site(s: dict, multiplier: int = 3) -> dict:
-                    s = dict(s)
-                    if "max_pages" in s:
-                        s["max_pages"] = s["max_pages"] * multiplier
-                    s.pop("max_results", None)
-                    return s
-
-                _sites        = [_weekly_site(s, multiplier=5) for s in SITES]        if weekly else SITES
-                _workday      = [_weekly_site(s) for s in WORKDAY_SITES]               if weekly else WORKDAY_SITES
-                _icims        = [_weekly_site(s) for s in ICIMS_SITES]                 if weekly else ICIMS_SITES
-                _emory        = [_weekly_site(s) for s in EMORY_SITES]                 if weekly else list(EMORY_SITES)
-
                 # LPT ordering — slowest sites first so they claim the first 3 slots.
                 # Phenom (serial per-job detail fetches, minutes each) >
                 # iCIMS/Emory (API intercept, very fast) >
                 # Workday (jobFamily-filtered CXS, quick date-exhaustion stop).
-                ordered = _sites + _icims + _emory + _workday
+                ordered = SITES + ICIMS_SITES + list(EMORY_SITES) + WORKDAY_SITES
                 if args.sites:
                     filters = [f.lower() for f in args.sites]
                     ordered = [s for s in ordered if any(f in s["name"].lower() for f in filters)]
@@ -1800,80 +1659,22 @@ async def main() -> None:
                 )
                 today_str = date.today().isoformat()
 
-                if weekly:
-                    week_cutoff = (date.today() - timedelta(days=7)).isoformat()
+                qualifying_count = sum(len(r.jobs) for r in results)
+                seen_urls = _load_seen_jobs()
+                main_results = _dedup(list(results), seen_urls, seen_record, today_str)
+                new_count = sum(len(r.jobs) for r in main_results)
+                _log(f"Dedup: {qualifying_count - new_count}/{qualifying_count} suppressed ({new_count} new)")
+                health_html = _build_health_section(qualifying_count, new_count, seen_record, TODAY)
 
-                    all_week: list[SiteResult] = list(results)
-
-                    # Add any new URLs found by rescrape to seen_record
-                    rescrape_urls: set[str] = set()
-                    for r in all_week:
-                        for j in r.jobs:
-                            url = j.get("url", "")
-                            rescrape_urls.add(url)
-                            if url not in seen_record:
-                                if _priority_score(j, r.name) == "primary":
-                                    seen_record[url] = {"first_seen": today_str, "title": j["title"], "site": r.name}
-                                else:
-                                    seen_record[url] = today_str
-
-                    # Recover primaries from seen_record this week that the rescrape missed
-                    missed_by_site: dict[str, list[dict]] = {}
-                    for url, v in seen_record.items():
-                        if (
-                            isinstance(v, dict)
-                            and v["first_seen"] >= week_cutoff
-                            and url not in rescrape_urls
-                        ):
-                            missed_by_site.setdefault(v["site"], []).append({
-                                "url": url,
-                                "title": v["title"],
-                                "date": date.fromisoformat(v["first_seen"]),
-                            })
-
-                    # Merge missed jobs back into their site slot (or append a new slot)
-                    for site_name, missed_jobs in missed_by_site.items():
-                        for i, r in enumerate(all_week):
-                            if r.name == site_name:
-                                all_week[i] = replace(r, jobs=r.jobs + missed_jobs)
-                                break
-                        else:
-                            all_week.append(SiteResult(site_name, missed_jobs, 0, 0, False, None))
-
-                    primary_results = _filter_primary(all_week)
-                    for r in primary_results:
-                        for _j in r.jobs:
-                            if not _is_excluded_title(_j["title"]):
-                                _log(f"  WEEKLY PRIMARY ({r.name}) — {_j['title'][:70]}")
-                    if no_email:
-                        if _has_content(primary_results):
-                            html = build_html_email(primary_results, since_date)
-                            out = BASE_DIR / "preview_weekly.html"
-                            out.write_text(html, encoding="utf-8")
-                            _log(f"  --no-email: wrote {out.name}")
-                    else:
-                        if _has_content(primary_results):
-                            send_email(primary_results, since_date, label="Recap")
-                        else:
-                            _log("  Weekly recap: no primary matches this week, skipping email")
-
+                if no_email:
+                    if _has_content(main_results):
+                        html = build_html_email(main_results, since_date, health_html=health_html)
+                        out = BASE_DIR / "preview_main.html"
+                        out.write_text(html, encoding="utf-8")
+                        _log(f"  --no-email: wrote {out.name}")
                 else:
-                    qualifying_count = sum(len(r.jobs) for r in results)
-                    seen_urls = _load_seen_jobs()
-                    main_results = _dedup(list(results), seen_urls, seen_record, today_str)
-                    new_count = sum(len(r.jobs) for r in main_results)
-                    _log(f"Dedup: {qualifying_count - new_count}/{qualifying_count} suppressed ({new_count} new)")
-                    health_html = _build_health_section(qualifying_count, new_count, seen_record, TODAY)
-
-                    if no_email:
-                        if _has_content(main_results):
-                            html = build_html_email(main_results, since_date, health_html=health_html)
-                            out = BASE_DIR / "preview_main.html"
-                            out.write_text(html, encoding="utf-8")
-                            _log(f"  --no-email: wrote {out.name}")
-                    else:
-                        if _has_content(main_results):
-                            send_email(main_results, TODAY, health_html=health_html)
+                    if _has_content(main_results):
+                        send_email(main_results, TODAY, health_html=health_html)
 
             finally:
                 if not no_save:
