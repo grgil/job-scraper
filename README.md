@@ -1,6 +1,6 @@
 # Health Job Scraper
 
-A personal job search automation tool built to solve a real problem: health system careers pages don't have good cross-site alerting, and manually checking 14 portals daily isn't realistic. The scraper monitors those portals across four ATS platforms (Workday, Phenom People, iCIMS, DirectEmployers), filters out clinical and non-target roles, and delivers a daily digest email — running unattended on a GitHub Actions cron schedule.
+A personal job search automation tool built to solve a real problem: health system careers pages don't have good cross-site alerting, and manually checking 15 portals daily isn't realistic. The scraper monitors those portals across five ATS platforms (Workday, Phenom People, iCIMS, DirectEmployers, Infor CloudSuite), filters out clinical and non-target roles, and delivers a daily digest email — running unattended on a GitHub Actions cron schedule.
 
 Built with Claude (Anthropic) as a coding collaborator. I drove the requirements, design decisions, and debugging; Claude handled implementation I didn't yet have fluency in. The goal was a working tool I understood well enough to maintain and extend independently.
 
@@ -17,6 +17,7 @@ Built with Claude (Anthropic) as a coding collaborator. I drove the requirements
 | CXS + detail pages | Same CXS intercept, but visits each job's detail page for the real `datePosted`. Required for MUSC and VUMC (`wd1` Workday tenant) which omit `postedOn` from CXS responses entirely. |
 | Card-embedded | Newer iCIMS portals (Ascension) embed date and location directly in listing cards. No detail page visits. |
 | API intercept | Intercepts the Jobsyn `prod-search-api.jobsyn.org` search response — returns full job records (title, date, location) as JSON. No page visits beyond the initial load. |
+| Direct JSON fetch | Used for UNC Health (Infor CloudSuite / Landmark). One `page.goto()` bootstraps an anonymous SSO session, then `page.request.get()` calls the `JobPosting.SearchForJobsResults` list endpoint directly (cursor-paginated via `pagingInfo.fk`/`lk`) — no DOM parsing or XHR interception needed. Title, category, location, requisition ID, and posting date all come from the list response; no detail-page visits required. Category filtering is done client-side against the `Category` field rather than replaying the portal UI's session-based filter. |
 
 ---
 

@@ -14,7 +14,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote
 
 from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError
@@ -290,6 +290,32 @@ EMORY_SITES = [
         "name": "Emory Healthcare",
         "page_url": "https://emory.jobs/jobs/",
         "max_pages": 20,
+    },
+]
+
+# UNC Health — Infor CloudSuite HCM (Landmark career site).
+# jobs.unchealthcare.org itself sits behind an interactive Cloudflare Turnstile
+# challenge (confirmed blocked domain-wide, including robots.txt) — see
+# inspect_selectors.py header. The actual ATS backend below has no such wall
+# and exposes a clean, directly-fetchable JSON list endpoint.
+INFOR_SITES = [
+    {
+        "name": "UNC Health",
+        "entry_url": (
+            "https://css-unchealthunc-prd.inforcloudsuite.com/hcm/Jobs/list/"
+            "JobPosting.SearchForJobsResults?csk.JobBoard=EXTERNAL"
+            "&csk.HROrganization=9999&menu=JobsNavigationMenu.JobSearch"
+        ),
+        "hro_organization": "9999",
+        # Matches the marketing site's "information-technology-management-non-clinical
+        # -professional-non-clinical" category filter. Source data has a genuine double
+        # space before the dash in "Management  - Non-Clinical" — preserve it verbatim.
+        "categories": {
+            "Information Technology",
+            "Management  - Non-Clinical",
+            "Professional - Non-Clinical",
+        },
+        "max_pages": 15,
     },
 ]
 
@@ -1349,6 +1375,153 @@ async def scrape_emory_site(browser, site: dict, since_date: date) -> tuple[list
 
 
 # ---------------------------------------------------------------------------
+# UNC Health (Infor CloudSuite HCM / Landmark)
+# ---------------------------------------------------------------------------
+
+async def _infor_fetch_page(page, origin: str, hro: str, fk: str | None, pagesize: int = 200) -> dict:
+    params = {
+        "pageop": "load",
+        "pagesize": str(pagesize),
+        "sortOrderName": "JobPosting.ByPostDateBeginSet",
+        "isAscending": "false",
+        "menu": "JobsNavigationMenu.JobSearch",
+        "csk.JobBoard": "EXTERNAL",
+        "csk.HROrganization": hro,
+    }
+    if fk:
+        params["fk"] = fk
+    resp = await page.request.get(f"{origin}/hcm/Jobs/list/JobPosting.SearchForJobsResults", params=params)
+    if resp.status != 200:
+        return {}
+    return await resp.json()
+
+
+def _infor_detail_url(origin: str, hro: str, job_id) -> str:
+    resource = quote(f"JobPosting[JobPostingSet]({hro},{job_id},1).JobPostingDisplay", safe="")
+    return (
+        f"{origin}/hcm/Jobs/form/{resource}"
+        f"?menu=JobsNavigationMenu.JobSearch&csk.JobBoard=EXTERNAL&csk.HROrganization={hro}"
+    )
+
+
+def _infor_location(fields: dict) -> str:
+    # e.g. "US:NC:Morrisville" -> "Morrisville, NC"
+    raw = (fields.get("LocationOfJobDescriptionForSort") or {}).get("value") or ""
+    parts = raw.split(":")
+    return f"{parts[2]}, {parts[1]}" if len(parts) == 3 else raw
+
+
+async def scrape_infor_site(browser, site: dict, since_date: date) -> tuple[list[dict], int, int, date | None, int]:
+    _site_ctx.set(site["name"])
+    _log(f"Scraping {site['name']} (Infor CloudSuite) ...")
+    page = await browser.new_page()
+    try:
+        parsed = urlparse(site["entry_url"])
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        hro = site["hro_organization"]
+        categories = site.get("categories")
+        loc_kw = site.get("location_keywords", set())
+        max_pages = site.get("max_pages")
+
+        _log(f"  Loading {site['entry_url']}")
+        await page.goto(site["entry_url"], wait_until="domcontentloaded", timeout=45_000)
+        await page.wait_for_timeout(2_000)  # let the SSO redirect chain establish the session
+
+        results: list[dict] = []
+        skipped_excl = 0
+        skipped_err = 0
+        newest_seen: date | None = None
+        page_num = 1
+        pages_seen = 0
+        fk: str | None = None
+
+        while True:
+            data = await _infor_fetch_page(page, origin, hro, fk)
+            rows = ((data.get("dataViewSet") or {}).get("data")) or []
+            if not rows:
+                _log("  No more pages")
+                break
+
+            pages_seen += 1
+            page_matches = 0
+            page_exhausted = False
+
+            for row in rows:
+                fields = row.get("fields", {})
+                title = ((fields.get("Description") or {}).get("value") or "").strip()
+                job_id = (fields.get("JobId") or {}).get("value")
+                cat = ((fields.get("Category") or {}).get("stateValues") or [{}])[0].get("label", "")
+                raw_date = (fields.get("PostingDateRange") or {}).get("value") or ""
+
+                if not title or not job_id or not raw_date:
+                    skipped_err += 1
+                    continue
+
+                try:
+                    dp = datetime.strptime(raw_date, "%Y%m%d").date()
+                except ValueError:
+                    skipped_err += 1
+                    continue
+
+                if newest_seen is None or dp > newest_seen:
+                    newest_seen = dp
+
+                # Sort key is (date, jobId) descending, so once a row falls below the
+                # cutoff, nothing later on this page or on subsequent pages qualifies —
+                # finish scanning this page (in case of same-day ties) then stop paging.
+                if dp < since_date:
+                    page_exhausted = True
+                    continue
+
+                if categories and cat not in categories:
+                    skipped_excl += 1
+                    continue
+
+                location = _infor_location(fields)
+                if not _loc_qualifies(location, loc_kw):
+                    continue
+
+                if _is_excluded_title(title):
+                    skipped_excl += 1
+                    continue
+
+                page_matches += 1
+                results.append({
+                    "title": title,
+                    "url": _infor_detail_url(origin, hro, job_id),
+                    "date_posted": dp,
+                    "location": location,
+                    "occupational_category": cat,
+                    "work_hours": "",
+                    "employment_type": "",
+                })
+
+            freshness = _page_freshness(newest_seen)
+            _log(f"  Page {page_num}: {page_matches} recent, {freshness}")
+
+            if page_exhausted:
+                _log(f"  {site['name']}: date exhaustion — page {page_num}, {freshness}")
+                break
+
+            paging = (data.get("dataViewSet") or {}).get("pagingInfo") or {}
+            if not paging.get("hasNext"):
+                _log("  No more pages")
+                break
+
+            page_num += 1
+            if max_pages and page_num > max_pages:
+                _log(f"  {site['name']}: page limit ({max_pages}) reached — stopping at page {page_num}")
+                break
+            fk = paging.get("lk")
+            if not fk:
+                break
+
+        return results, skipped_excl, skipped_err, newest_seen, pages_seen
+    finally:
+        await page.close()
+
+
+# ---------------------------------------------------------------------------
 # Scraper registry — wire each site to its function after all are defined.
 # _run_site reads site["scraper"] so main dispatches uniformly.
 # ---------------------------------------------------------------------------
@@ -1357,6 +1530,7 @@ for _s in SITES:         _s["scraper"] = scrape_site
 for _s in WORKDAY_SITES: _s["scraper"] = scrape_workday_site
 for _s in ICIMS_SITES:   _s["scraper"] = scrape_icims_site
 for _s in EMORY_SITES:   _s["scraper"] = scrape_emory_site
+for _s in INFOR_SITES:   _s["scraper"] = scrape_infor_site
 
 
 # ---------------------------------------------------------------------------
@@ -1646,7 +1820,7 @@ async def main() -> None:
                 # Phenom (serial per-job detail fetches, minutes each) >
                 # iCIMS/Emory (API intercept, very fast) >
                 # Workday (jobFamily-filtered CXS, quick date-exhaustion stop).
-                ordered = SITES + ICIMS_SITES + list(EMORY_SITES) + WORKDAY_SITES
+                ordered = SITES + ICIMS_SITES + list(EMORY_SITES) + list(INFOR_SITES) + WORKDAY_SITES
                 if args.sites:
                     filters = [f.lower() for f in args.sites]
                     ordered = [s for s in ordered if any(f in s["name"].lower() for f in filters)]

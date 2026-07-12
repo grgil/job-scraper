@@ -37,6 +37,43 @@ Clear the URL lists when done — do not commit live URLs to this file.
 #           No dates in listing cards — detail page visits required per job
 #           pagination-view-more = load-more button, not traditional pagination
 #   Verdict: feasible but needs a custom scraper (not standard Workday/iCIMS/Phenom)
+#
+# UNC Health
+#   URL: https://jobs.unchealthcare.org/search/.../jobs  (marketing/front-end site)
+#   Result: entire domain (including /robots.txt, /sitemap.xml) returns HTTP 403 from
+#           an interactive Cloudflare Turnstile "Verify you are human" challenge
+#           (cf-mitigated: challenge header). Not a passive JS bot-check like Novant/
+#           Centene above — a real CAPTCHA-style wall. Not automated around.
+#   Verdict: skip this domain entirely. See below for the real integration point.
+#
+# UNC Health — Infor CloudSuite HCM (Landmark career site) — INTEGRATED
+#   URL: https://css-unchealthunc-prd.inforcloudsuite.com/hcm/Jobs/list/
+#        JobPosting.SearchForJobsResults?csk.JobBoard=EXTERNAL&csk.HROrganization=9999
+#        &menu=JobsNavigationMenu.JobSearch
+#   Found via the site's "Returning Applicant" portal link — a separate domain from
+#   jobs.unchealthcare.org with no Cloudflare protection (plain HTTP 200).
+#   ATS: Infor CloudSuite HCM, "Candidate Experience" module (Landmark UI framework,
+#        data-automation-id="lm-*"). Not previously integrated (distinct from Workday/
+#        iCIMS/Phenom/Jobsyn).
+#   Result: page.goto() on the entry URL bootstraps an anonymous SSO session; the real
+#           job data endpoint (.../hcm/Jobs/list/JobPosting.SearchForJobsResults?
+#           pageop=load&pagesize=200&sortOrderName=JobPosting.ByPostDateBeginSet&
+#           isAscending=false&...) is a directly GET-able JSON API (via page.request.get,
+#           reusing the session's cookies) — not the output=spec calls, which are just
+#           UI/form metadata. Each row's fields include Description (title), Category
+#           (label matches the marketing site's URL category slugs), a stable numeric
+#           JobId/JobRequisition, PostingDateRange (clean YYYYMMDD, no detail-page fetch
+#           needed for dates), and LocationOfJobDescriptionForSort ("US:NC:City").
+#           Pagination is cursor-based (pagingInfo.fk/lk/hasNext, sorted newest-first) —
+#           >200 total postings, so cursor chaining is required beyond page 1.
+#           Per-job detail is an inline SPA panel, not a real anchor href, but
+#           .../hcm/Jobs/form/JobPosting%5BJobPostingSet%5D(9999,{id},1).JobPostingDisplay
+#           ?menu=JobsNavigationMenu.JobSearch&csk.JobBoard=EXTERNAL&csk.HROrganization=9999
+#           renders correctly as a cold/standalone deep link — used as the email job URL.
+#           Category filtering in the UI is session/state-based (no clean replayable
+#           query param found); scraper filters client-side on the free Category field
+#           instead of reproducing the UI's stateful filter.
+#   Verdict: integrated — see INFOR_SITES / scrape_infor_site() in scraper.py.
 # ---------------------------------------------------------------------------
 """
 import asyncio
